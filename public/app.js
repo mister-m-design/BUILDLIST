@@ -11,7 +11,7 @@ const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPAB
   }
 }) : null;
 let session=null;
-let state={applications:[],projects:[],features:[]};
+let state={applications:[],projects:[],features:[],agentNotes:[]};
 let activeView='all', activeProject=null, activeApp=null, editingId=null, editingProjectId=null;
 
 const $=id=>document.getElementById(id);
@@ -124,13 +124,14 @@ async function logout(){await sb.auth.signOut()}
 
 async function loadCloud(){
   const uid=currentUser(); if(!uid)return;
-  const [{data:apps,error:ae},{data:projects,error:pe},{data:features,error:fe}]=await Promise.all([
+  const [{data:apps,error:ae},{data:projects,error:pe},{data:features,error:fe},{data:agentNotes,error:ne}]=await Promise.all([
     sb.from('applications').select('*').order('sort_order').order('name'),
     sb.from('projects').select('*').order('name'),
-    sb.from('features').select('*').order('updated_at',{ascending:false})
+    sb.from('features').select('*').order('updated_at',{ascending:false}),
+    sb.from('agent_notes').select('*').order('created_at',{ascending:false})
   ]);
   if(ae||pe||fe){toast((ae||pe||fe).message);return}
-  state={applications:apps||[],projects:projects||[],features:features||[]};
+  state={applications:apps||[],projects:projects||[],features:features||[],agentNotes:ne?[]:(agentNotes||[])};
 
   if(state.applications.length===0 && state.projects.length===0 && state.features.length===0){
     await seedLegacyBuildlist();
@@ -298,7 +299,81 @@ function visibleFeatures(){
   else a.sort((x,y)=>new Date(y.updated_at)-new Date(x.updated_at));
   return a;
 }
-function render(){renderSidebar();renderMain()}
+
+function featureById(id){return state.features.find(f=>f.id===id)}
+function formatNoteTime(value){
+  if(!value)return '';
+  try{return new Date(value).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}catch{return value}
+}
+function visibleAgentNotes(){
+  const mode=$('noteFilter')?.value||'open';
+  let notes=[...state.agentNotes];
+  if(mode==='open')notes=notes.filter(n=>!n.resolved);
+  else if(mode==='resolved')notes=notes.filter(n=>n.resolved);
+  const q=$('searchInput').value.trim().toLowerCase();
+  if(q)notes=notes.filter(n=>{
+    const f=featureById(n.feature_id);
+    return [n.note,n.agent,f?.title,projectName(f?.project_id),projectAppName(f?.project_id)].join(' ').toLowerCase().includes(q);
+  });
+  return notes;
+}
+function renderAgentNotes(){
+  $('pageTitle').textContent='Agent Notes';
+  $('pageSub').textContent='Review feedback and completion notes from Claude, Codex, and other agents.';
+  ['editProjectBtn','moveProjectBtn','deleteProjectBtn','projectAgentToggle'].forEach(id=>{const e=$(id);if(e)e.style.display='none'});
+  $('noteFilter').style.display='';
+  $('priorityFilter').style.display='none';
+  $('sortSelect').style.display='none';
+  const openCount=state.agentNotes.filter(n=>!n.resolved).length;
+  $('statTotal').textContent=state.agentNotes.length;
+  $('statNow').textContent=openCount;
+  $('statNext').textContent=state.agentNotes.filter(n=>n.resolved).length;
+  $('statDone').textContent='';
+  $('statTotal').nextElementSibling.textContent='Notes';
+  $('statNow').nextElementSibling.textContent='Open';
+  $('statNext').nextElementSibling.textContent='Resolved';
+  $('statDone').nextElementSibling.textContent='';
+  const notes=visibleAgentNotes();
+  const list=$('featureList');
+  if(!notes.length){list.innerHTML='<div class="empty"><b>No agent notes found</b>Change the note filter or wait for Claude/Codex to write back.</div>';return}
+  list.innerHTML=notes.map(n=>{
+    const f=featureById(n.feature_id);
+    const project=f?projectName(f.project_id):'Unknown Project';
+    const app=f?projectAppName(f.project_id):'';
+    return `<article class="card note-card ${n.resolved?'note-resolved':''}" data-note-id="${n.id}">
+      <div>
+        <div class="card-context"><span class="context-app">${esc(app)}</span><span class="context-sep">›</span><span class="context-project">${esc(project)}</span>${f?'<span class="context-sep">›</span><span class="context-area">'+esc(f.title)+'</span>':''}</div>
+        <div class="card-title">${esc(n.agent||'Agent')} <span class="note-time">${esc(formatNoteTime(n.created_at))}</span></div>
+        <div class="desc note-body">${esc(n.note||'')}</div>
+        <div class="card-meta"><span class="chip ${n.resolved?'status-done':'status-now'}">${n.resolved?'Resolved':'Open'}</span></div>
+      </div>
+      <div class="card-actions note-actions">
+        ${f?'<button class="secondary note-open-feature" data-feature-id="'+f.id+'">Open Feature</button>':''}
+        <button class="secondary note-toggle-resolved" data-note-id="${n.id}">${n.resolved?'Reopen':'Resolve'}</button>
+      </div>
+    </article>`;
+  }).join('');
+  list.querySelectorAll('.note-open-feature').forEach(b=>b.onclick=e=>{e.stopPropagation();openDrawer(b.dataset.featureId)});
+  list.querySelectorAll('.note-toggle-resolved').forEach(b=>b.onclick=async e=>{e.stopPropagation();await toggleNoteResolved(b.dataset.noteId)});
+}
+async function toggleNoteResolved(id){
+  const note=state.agentNotes.find(n=>n.id===id);if(!note)return;
+  const next=!note.resolved;
+  const {error}=await sb.from('agent_notes').update({resolved:next,resolved_at:next?new Date().toISOString():null}).eq('id',id);
+  if(error){toast(error.message);return}
+  await loadCloud();
+  activeView='notes';activeProject=null;activeApp=null;render();
+  toast(next?'Note resolved':'Note reopened');
+}
+function restoreStandardFilters(){
+  if($('noteFilter'))$('noteFilter').style.display='none';
+  if($('priorityFilter'))$('priorityFilter').style.display='';
+  if($('sortSelect'))$('sortSelect').style.display='';
+  const labels=[['statTotal','Total'],['statNow','Now'],['statNext','Next'],['statDone','Done']];
+  labels.forEach(([id,label])=>{const el=$(id);if(el&&el.nextElementSibling)el.nextElementSibling.textContent=label});
+}
+
+function render(){renderSidebar();restoreStandardFilters();renderMain()}
 function renderSidebar(){
   const ownTotals={}; state.projects.forEach(p=>ownTotals[p.id]=0); state.features.forEach(f=>ownTotals[f.project_id]=(ownTotals[f.project_id]||0)+1);
   const totalFor=id=>{let n=0;descendantProjectIds(id).forEach(pid=>n+=ownTotals[pid]||0);return n};
@@ -312,7 +387,7 @@ function renderSidebar(){
   };
   const apps=[...state.applications].sort((a,b)=>{const pref=['After Effects','Cinema 4D','Standalone / Web'];const ai=pref.indexOf(a.name),bi=pref.indexOf(b.name);if(ai!==-1||bi!==-1)return (ai===-1?99:ai)-(bi===-1?99:bi);return a.name.localeCompare(b.name)});
   $('projectList').innerHTML=apps.map(app=>{const roots=state.projects.filter(p=>p.application_id===app.id&&!p.parent_project_id);const total=roots.reduce((n,p)=>n+totalFor(p.id),0);return `<div class="appgroup"><button class="apphead ${activeApp===app.id&&!activeProject?'active':''}" data-app="${app.id}"><span class="appchev">▾</span><span>${esc(app.name)}</span><span class="count">${total}</span></button>${renderTree(app.id)}</div>`}).join('');
-  const counts={all:state.features.length,inbox:0,now:0,next:0,later:0,done:0,agent:state.features.filter(f=>projectReady(f.project_id)&&f.status!=='Done').length};
+  const counts={all:state.features.length,inbox:0,now:0,next:0,later:0,done:0,agent:state.features.filter(f=>projectReady(f.project_id)&&f.status!=='Done').length,notes:state.agentNotes.filter(n=>!n.resolved).length};
   state.features.forEach(f=>{const k=f.status.toLowerCase();if(k in counts)counts[k]++});
   Object.entries(counts).forEach(([k,v])=>{const e=$(k+'Count');if(e)e.textContent=v});
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',!activeProject&&!activeApp&&b.dataset.view===activeView));
@@ -320,6 +395,7 @@ function renderSidebar(){
   document.querySelectorAll('.apphead').forEach(b=>b.onclick=()=>{activeProject=null;activeApp=b.dataset.app;activeView='all';render()});
 }
 function renderMain(){
+  if(activeView==='notes'&&!activeProject&&!activeApp){renderAgentNotes();return}
   const arr=visibleFeatures();let title='All Features',sub='Everything you want to build, in one place.';
   if(activeProject){
     const trail=projectTrail(activeProject);
@@ -485,7 +561,7 @@ $('logoutBtn').onclick=logout;
 document.querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{activeProject=null;activeApp=null;activeView=b.dataset.view;render()});
 $('newFeatureBtn').onclick=()=>openDrawer();$('closeDrawer').onclick=closeDrawer;$('cancelFeature').onclick=closeDrawer;$('overlay').onclick=closeDrawer;$('saveFeature').onclick=saveFeature;$('deleteFeature').onclick=deleteFeature;
 $('projectAgentToggle').onclick=toggleActiveProjectAgent;
-$('searchInput').oninput=renderMain;$('priorityFilter').onchange=renderMain;$('sortSelect').onchange=renderMain;
+$('searchInput').oninput=renderMain;$('priorityFilter').onchange=renderMain;$('sortSelect').onchange=renderMain;$('noteFilter').onchange=renderAgentNotes;
 $('addProjectBtn').onclick=()=>showProjectModal(true);$('newProjectTopBtn').onclick=()=>showProjectModal(true);$('editProjectBtn').onclick=()=>{if(activeProject)showProjectModal(true,activeProject)};$('moveProjectBtn').onclick=moveActiveProject;$('deleteProjectBtn').onclick=()=>deleteProject(activeProject);$('deleteProjectModalBtn').onclick=()=>deleteProject(editingProjectId);$('projectApp').onchange=e=>{$('customAppField').style.display=e.target.value==='__custom'?'block':'none';refreshParentProjectOptions();if(e.target.value==='__custom')setTimeout(()=>$('customAppName').focus(),40)};$('cancelProject').onclick=()=>showProjectModal(false);$('modalOverlay').onclick=()=>showProjectModal(false);$('saveProject').onclick=addProject;$('projectName').onkeydown=e=>{if(e.key==='Enter')addProject()};
 $('exportBtn').onclick=exportData;$('importBtn').onclick=()=>$('importFile').click();$('importFile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('searchInput').focus()}if(e.key==='Escape'){closeDrawer();showProjectModal(false)}});
