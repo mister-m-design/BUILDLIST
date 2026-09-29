@@ -1,7 +1,15 @@
 const KEY='buildlist.v1';
 const CFG=window.BUILDLIST_CONFIG||{};
 const configured=CFG.SUPABASE_URL && !CFG.SUPABASE_URL.includes('YOUR-PROJECT') && CFG.SUPABASE_ANON_KEY && !CFG.SUPABASE_ANON_KEY.includes('YOUR-PUBLIC');
-const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY) : null;
+const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: window.localStorage,
+    storageKey: 'buildlist-auth'
+  }
+}) : null;
 let session=null;
 let state={applications:[],projects:[],features:[]};
 let activeView='all', activeProject=null, activeApp=null, editingId=null;
@@ -30,7 +38,10 @@ async function routeAuth(){
 async function login(){
   const email=$('authEmail').value.trim(); if(!email)return;
   $('authMessage').textContent='Sending sign-in link…';
-  const {error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:window.location.origin}});
+  const {error}=await sb.auth.signInWithOtp({
+    email,
+    options:{emailRedirectTo:'https://buildlist.mmurtha.workers.dev'}
+  });
   $('authMessage').textContent=error?error.message:'Check your email for the sign-in link.';
 }
 async function logout(){await sb.auth.signOut()}
