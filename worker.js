@@ -29,19 +29,38 @@ async function agentTasks(request, env) {
 
   const appMap = Object.fromEntries(apps.map(a => [a.id, a]));
   const projectMap = Object.fromEntries(projects.map(p => [p.id, p]));
+  const lineage = id => {
+    const out = [], seen = new Set();
+    let p = projectMap[id];
+    while (p && !seen.has(p.id)) {
+      out.push(p);
+      seen.add(p.id);
+      p = p.parent_project_id ? projectMap[p.parent_project_id] : null;
+    }
+    return out;
+  };
+  const isReady = id => lineage(id).some(p => p.ready_for_agent);
+  const inherited = (id, field, fallback = "") => {
+    for (const p of lineage(id)) {
+      const value = p?.[field];
+      if (value !== undefined && value !== null && String(value).trim() !== "") return value;
+    }
+    return fallback;
+  };
 
-  const readyProjects = new Set(projects.filter(p => p.ready_for_agent).map(p => p.id));
-  const tasks = features.filter(f => readyProjects.has(f.project_id)).map(f => {
+  const tasks = features.filter(f => isReady(f.project_id)).map(f => {
     const p = projectMap[f.project_id] || {};
     const a = appMap[p.application_id] || {};
+    const parents = lineage(f.project_id).slice(1).reverse().map(x => x.name);
     return {
       id: f.id,
       application: a.name || "Other",
       project: p.name || "Unknown",
-      repository: p.repo_url || "",
-      branch: p.branch || "main",
-      localPath: p.local_path || "",
-      projectAgentInstructions: p.agent_instructions || "",
+      parentProjects: parents,
+      repository: inherited(f.project_id, "repo_url", ""),
+      branch: inherited(f.project_id, "branch", "main"),
+      localPath: inherited(f.project_id, "local_path", ""),
+      projectAgentInstructions: lineage(f.project_id).slice().reverse().map(x => x.agent_instructions || "").filter(Boolean).join("\n\n"),
       area: f.area || "",
       title: f.title,
       status: f.status,
@@ -117,14 +136,21 @@ async function updateAgentTask(request, env, taskId) {
   }
 
   const projectR = await fetch(
-    `${base}/rest/v1/projects?id=eq.${encodeURIComponent(feature.project_id)}&user_id=eq.${encodeURIComponent(user)}&ready_for_agent=eq.true&select=id`,
+    `${base}/rest/v1/projects?user_id=eq.${encodeURIComponent(user)}&select=id,parent_project_id,ready_for_agent`,
     { headers }
   );
   if (!projectR.ok) {
     return Response.json({ error: "Project lookup failed" }, { status: 502 });
   }
   const projects = await projectR.json();
-  if (!projects.length) {
+  const projectMap = Object.fromEntries(projects.map(p => [p.id, p]));
+  let p = projectMap[feature.project_id], allowed = false, seen = new Set();
+  while (p && !seen.has(p.id)) {
+    if (p.ready_for_agent) { allowed = true; break; }
+    seen.add(p.id);
+    p = p.parent_project_id ? projectMap[p.parent_project_id] : null;
+  }
+  if (!allowed) {
     return Response.json({ error: "Project is not Ready for Agent" }, { status: 403 });
   }
 
