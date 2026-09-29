@@ -43,24 +43,57 @@ async function login(){
   const {error}=await sb.auth.signInWithPassword({email,password});
   $('authMessage').textContent=error?error.message:'';
 }
-async function sendMagicLink(){
-  const email=$('authEmail').value.trim(); if(!email){$('authMessage').textContent='Enter your email first.';return}
-  $('authMessage').textContent='Sending one-time sign-in link…';
-  const {error}=await sb.auth.signInWithOtp({
-    email,
-    options:{emailRedirectTo:'https://buildlist.mmurtha.workers.dev'}
-  });
-  $('authMessage').textContent=error?error.message:'Check your email for the one-time link. After signing in, click Set Password.';
+function togglePasswordSetup(){
+  const panel=$('passwordSetupPanel');
+  const show=panel.style.display==='none'||!panel.style.display;
+  panel.style.display=show?'grid':'none';
+  $('authMessage').textContent=show?'Enter the same Agent Feed Token you saved for Claude, then choose a new password.':'';
+}
+async function setupPassword(){
+  const token=$('setupToken').value.trim();
+  const password=$('setupPassword').value;
+  const confirmPassword=$('setupPasswordConfirm').value;
+  if(!token){$('authMessage').textContent='Enter your Agent Feed Token.';return}
+  if(password.length<8){$('authMessage').textContent='Password must be at least 8 characters.';return}
+  if(password!==confirmPassword){$('authMessage').textContent='Passwords do not match.';return}
+  $('authMessage').textContent='Setting password…';
+  try{
+    const response=await fetch('/api/auth/set-password',{
+      method:'POST',
+      headers:{
+        'Authorization':'Bearer '+token,
+        'Content-Type':'application/json'
+      },
+      body:JSON.stringify({password})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok){$('authMessage').textContent=data.error||'Could not set password.';return}
+    $('authPassword').value=password;
+    $('passwordSetupPanel').style.display='none';
+    $('setupToken').value='';
+    $('setupPassword').value='';
+    $('setupPasswordConfirm').value='';
+    $('authMessage').textContent='Password set. Click Sign In.';
+  }catch(e){
+    $('authMessage').textContent='Could not reach password setup endpoint.';
+  }
 }
 async function setPassword(){
+  const token=prompt('Enter your Agent Feed Token:');
+  if(token===null)return;
   const password=prompt('Choose a new Buildlist password (at least 8 characters):');
   if(password===null)return;
   if(password.length<8){toast('Password must be at least 8 characters');return}
   const confirmPassword=prompt('Enter the new password again:');
   if(confirmPassword!==password){toast('Passwords do not match');return}
-  const {error}=await sb.auth.updateUser({password});
-  if(error){toast(error.message);return}
-  toast('Password set. You can use email + password from now on.');
+  const response=await fetch('/api/auth/set-password',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+    body:JSON.stringify({password})
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok){toast(data.error||'Could not set password');return}
+  toast('Password updated');
 }
 async function logout(){await sb.auth.signOut()}
 
@@ -327,7 +360,8 @@ function exportData(){const payload={applications:state.applications,projects:st
 function importData(file){const r=new FileReader();r.onload=async()=>{try{const x=JSON.parse(r.result);if(Array.isArray(x.applications)){toast('Cloud backup import is not enabled yet; use a legacy Buildlist export for migration.');return}await importLegacyObject(x);toast('Local Buildlist imported to cloud')}catch(e){toast(e.message||'Import failed')}};r.readAsText(file)}
 
 $('authButton').onclick=login;
-$('magicLinkButton').onclick=sendMagicLink;
+$('passwordSetupToggle').onclick=togglePasswordSetup;
+$('setupPasswordButton').onclick=setupPassword;
 $('authEmail').onkeydown=e=>{if(e.key==='Enter')login()};
 $('authPassword').onkeydown=e=>{if(e.key==='Enter')login()};
 $('setPasswordBtn').onclick=setPassword;
