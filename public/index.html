@@ -40,6 +40,7 @@
       <button class="navbtn" data-view="later">○ Later <span class="count" id="laterCount">0</span></button>
       <button class="navbtn" data-view="done">✓ Done <span class="count" id="doneCount">0</span></button>
       <button class="navbtn" data-view="agent">⚡ Agent Queue <span class="count" id="agentCount">0</span></button>
+      <button class="navbtn" data-view="notes">✎ Agent Notes <span class="count" id="notesCount">0</span></button>
       <div class="projects-head"><div class="side-label">Projects</div><button class="iconbtn" id="addProjectBtn" title="Add project">＋</button></div>
       <div id="projectList"></div>
     </div>
@@ -60,7 +61,7 @@
     </div>
     <div class="content">
       <div class="header"><div><h2 id="pageTitle">All Features</h2><div class="sub" id="pageSub">Everything you want to build, in one place.</div></div>
-        <div class="viewtools"><button class="secondary" id="editProjectBtn" style="display:none">Edit Project</button><button class="secondary" id="moveProjectBtn" style="display:none">Move Project</button><button class="danger" id="deleteProjectBtn" style="display:none">Delete Project</button><button class="secondary" id="projectAgentToggle" style="display:none">⚡ Ready for Agent</button><select class="filter" id="priorityFilter"><option value="all">All priorities</option><option>High</option><option>Medium</option><option>Low</option></select><select class="filter" id="sortSelect"><option value="updated">Recently updated</option><option value="created">Recently added</option><option value="priority">Priority</option><option value="title">Title A–Z</option></select></div>
+        <div class="viewtools"><button class="secondary" id="editProjectBtn" style="display:none">Edit Project</button><button class="secondary" id="moveProjectBtn" style="display:none">Move Project</button><button class="danger" id="deleteProjectBtn" style="display:none">Delete Project</button><button class="secondary" id="projectAgentToggle" style="display:none">⚡ Ready for Agent</button><select class="filter" id="noteFilter" style="display:none"><option value="open">Open notes</option><option value="resolved">Resolved notes</option><option value="all">All notes</option></select><select class="filter" id="priorityFilter"><option value="all">All priorities</option><option>High</option><option>Medium</option><option>Low</option></select><select class="filter" id="sortSelect"><option value="updated">Recently updated</option><option value="created">Recently added</option><option value="priority">Priority</option><option value="title">Title A–Z</option></select></div>
       </div>
       <div class="stats"><div class="stat"><strong id="statTotal">0</strong><span>Total</span></div><div class="stat"><strong id="statNow">0</strong><span>Now</span></div><div class="stat"><strong id="statNext">0</strong><span>Next</span></div><div class="stat"><strong id="statDone">0</strong><span>Done</span></div></div>
       <div class="listwrap"><div id="featureList" class="feature-list"></div></div>
