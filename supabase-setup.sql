@@ -18,6 +18,7 @@ create table if not exists projects (
   repo_url text default '',
   local_path text default '',
   agent_instructions text default '',
+  ready_for_agent boolean not null default false,
   branch text not null default 'main',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -57,6 +58,7 @@ create policy "features_owner_all" on features for all using (auth.uid() = user_
 
 create index if not exists projects_user_idx on projects(user_id);
 create index if not exists projects_application_idx on projects(application_id);
+create index if not exists projects_ready_idx on projects(user_id, ready_for_agent) where ready_for_agent = true;
 create index if not exists features_user_idx on features(user_id);
 create index if not exists features_project_idx on features(project_id);
 create index if not exists features_ready_idx on features(user_id, ready_for_agent) where ready_for_agent = true;
