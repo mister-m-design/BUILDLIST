@@ -43,7 +43,154 @@ async function loadCloud(){
   ]);
   if(ae||pe||fe){toast((ae||pe||fe).message);return}
   state={applications:apps||[],projects:projects||[],features:features||[]};
+
+  if(state.applications.length===0 && state.projects.length===0 && state.features.length===0){
+    await seedLegacyBuildlist();
+    return;
+  }
+
   render();
+}
+
+async function seedLegacyBuildlist(){
+  const uid=currentUser();
+  const appNames=['After Effects','Cinema 4D','Standalone / Web'];
+  const {data:apps,error:appErr}=await sb.from('applications')
+    .insert(appNames.map((name,i)=>({user_id:uid,name,sort_order:i})))
+    .select();
+  if(appErr){toast(appErr.message);return}
+
+  const appMap=Object.fromEntries((apps||[]).map(a=>[a.name,a.id]));
+  const legacyProjects=[
+    ['p-boardly','Boardly','Standalone / Web'],
+    ['p-buildlist','Buildlist','Standalone / Web'],
+    ['p-tooldesk','ASPECT Tool Desk','After Effects'],
+    ['p-recall','AEP RECALL','After Effects'],
+    ['p-typescout','ASPECT Type Scout','After Effects'],
+    ['p-inspector','ASPECT Project Inspector','After Effects'],
+    ['p-material','ASPECT Material Browser','Cinema 4D'],
+    ['p-scenesort','ASPECT Scene Sort','Cinema 4D'],
+    ['p-lightmixer','ASPECT Light Mixer','Cinema 4D'],
+    ['p-hdri','ASPECT HDRI Browser','Cinema 4D'],
+    ['p-snoot','ASPECT Snoot','Cinema 4D'],
+    ['p-blockgen','ASPECT Block Generator','Cinema 4D']
+  ];
+
+  const {data:projects,error:projectErr}=await sb.from('projects')
+    .insert(legacyProjects.map(([legacy_id,name,app])=>({
+      user_id:uid,
+      application_id:appMap[app],
+      name,
+      branch:'main',
+      agent_instructions:'',
+      repo_url:'',
+      local_path:'',
+      legacy_id
+    })))
+    .select();
+  if(projectErr){
+    // Older schema may not have legacy_id yet; retry without it.
+    const {data:retryProjects,error:retryErr}=await sb.from('projects')
+      .insert(legacyProjects.map(([,name,app])=>({
+        user_id:uid,
+        application_id:appMap[app],
+        name,
+        branch:'main',
+        agent_instructions:'',
+        repo_url:'',
+        local_path:''
+      })))
+      .select();
+    if(retryErr){toast(retryErr.message);return}
+    return seedLegacyFeatures(uid,retryProjects||[],legacyProjects);
+  }
+  return seedLegacyFeatures(uid,projects||[],legacyProjects);
+}
+
+async function seedLegacyFeatures(uid,projects,legacyProjects){
+  const byName=Object.fromEntries(projects.map(p=>[p.name,p.id]));
+  const now=new Date();
+  const ago=ms=>new Date(now.getTime()-ms).toISOString();
+  const rows=[
+    {
+      project_id:byName['Boardly'],
+      area:'Library',
+      title:'Import complete Finder folder hierarchies',
+      status:'Next',
+      priority:'High',
+      tags:['import','organization'],
+      notes:'Import a complete folder hierarchy from Finder and recreate the same structure in the project library.',
+      acceptance:'Folders and images appear in the same hierarchy and remain easy to reorganize.',
+      version:'',
+      created_at:ago(600000),
+      updated_at:ago(600000)
+    },
+    {
+      project_id:byName['Boardly'],
+      area:'Library',
+      title:'True drag-and-drop organization',
+      status:'Now',
+      priority:'High',
+      tags:['drag-drop','organization'],
+      notes:'Move images and folders naturally with drag and drop instead of using clunky move controls.',
+      acceptance:'Items can be dragged between folders and reordered directly.',
+      version:'',
+      created_at:ago(500000),
+      updated_at:ago(500000)
+    },
+    {
+      project_id:byName['Boardly'],
+      area:'Board',
+      title:'Target frame for board export resolution',
+      status:'Next',
+      priority:'Medium',
+      tags:['export','layout'],
+      notes:'Show a clear frame representing the target export resolution while working on a board.',
+      acceptance:'Frame size is editable and export matches it exactly.',
+      version:'',
+      created_at:ago(400000),
+      updated_at:ago(400000)
+    },
+    {
+      project_id:byName['ASPECT Material Browser'],
+      area:'Library',
+      title:'Better searchable material categorization',
+      status:'Now',
+      priority:'High',
+      tags:['search','organization'],
+      notes:'Avoid creating a huge pile of folders. Categories should be curated, searchable, easy to browse, and support drag-and-drop promotion/organization.',
+      acceptance:'Materials can be found quickly by search or category without navigating excessive auto-generated folders.',
+      version:'',
+      created_at:ago(300000),
+      updated_at:ago(300000)
+    },
+    {
+      project_id:byName['ASPECT Scene Sort'],
+      area:'Integration',
+      title:'Custom icon and ASPECT menu integration',
+      status:'Done',
+      priority:'Medium',
+      tags:['icon','menu'],
+      notes:'Scene Sort should have its own custom-designed ASPECT icon and work correctly with the ASPECT menu tools.',
+      acceptance:'Custom icon displays correctly and tool appears in the ASPECT menu.',
+      version:'0.2.0',
+      created_at:ago(200000),
+      updated_at:ago(200000)
+    }
+  ].map(r=>({
+    ...r,
+    user_id:uid,
+    ready_for_agent:false,
+    agent_notes:'',
+    files_likely:'',
+    dependencies:'',
+    do_not_change:''
+  })).filter(r=>r.project_id);
+
+  const {error}=await sb.from('features').insert(rows);
+  if(error){toast(error.message);return}
+  toast('Old Buildlist data migrated');
+  await loadCloud();
 }
 
 function visibleFeatures(){
