@@ -12,15 +12,40 @@ const sb = configured ? window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPAB
 }) : null;
 let session=null;
 let state={applications:[],projects:[],features:[]};
-let activeView='all', activeProject=null, activeApp=null, editingId=null;
+let activeView='all', activeProject=null, activeApp=null, editingId=null, editingProjectId=null;
 
 const $=id=>document.getElementById(id);
 function esc(s=''){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(window.__toast);window.__toast=setTimeout(()=>t.classList.remove('show'),2200)}
 function appName(id){return state.applications.find(a=>a.id===id)?.name||'Other'}
 function projectName(id){return state.projects.find(p=>p.id===id)?.name||'No Project'}
-function projectAppName(projectId){const p=state.projects.find(p=>p.id===projectId);return p?appName(p.application_id):'Other'}
-function projectReady(projectId){return !!state.projects.find(p=>p.id===projectId)?.ready_for_agent}
+function projectById(id){return state.projects.find(p=>p.id===id)}
+function projectAppName(projectId){const p=projectById(projectId);return p?appName(p.application_id):'Other'}
+function projectOwnReady(projectId){return !!projectById(projectId)?.ready_for_agent}
+function projectReady(projectId){
+  let p=projectById(projectId), seen=new Set();
+  while(p&&!seen.has(p.id)){
+    if(p.ready_for_agent)return true;
+    seen.add(p.id);
+    p=p.parent_project_id?projectById(p.parent_project_id):null;
+  }
+  return false;
+}
+function descendantProjectIds(projectId){
+  const out=new Set([projectId]), queue=[projectId];
+  while(queue.length){
+    const id=queue.shift();
+    state.projects.filter(p=>p.parent_project_id===id).forEach(p=>{
+      if(!out.has(p.id)){out.add(p.id);queue.push(p.id)}
+    });
+  }
+  return out;
+}
+function projectTrail(projectId){
+  const parts=[], seen=new Set(); let p=projectById(projectId);
+  while(p&&!seen.has(p.id)){parts.unshift(p);seen.add(p.id);p=p.parent_project_id?projectById(p.parent_project_id):null}
+  return parts;
+}
 function currentUser(){return session?.user?.id}
 
 async function init(){
@@ -259,7 +284,7 @@ async function seedLegacyFeatures(uid,projects,legacyProjects){
 
 function visibleFeatures(){
   let a=[...state.features];
-  if(activeProject)a=a.filter(f=>f.project_id===activeProject);
+  if(activeProject){const ids=descendantProjectIds(activeProject);a=a.filter(f=>ids.has(f.project_id));}
   else if(activeApp)a=a.filter(f=>state.projects.find(p=>p.id===f.project_id)?.application_id===activeApp);
   else if(activeView==='agent')a=a.filter(f=>projectReady(f.project_id) && f.status!=='Done');
   else if(activeView!=='all')a=a.filter(f=>f.status.toLowerCase()===activeView);
@@ -275,9 +300,18 @@ function visibleFeatures(){
 }
 function render(){renderSidebar();renderMain()}
 function renderSidebar(){
-  const totals={}; state.projects.forEach(p=>totals[p.id]=0); state.features.forEach(f=>totals[f.project_id]=(totals[f.project_id]||0)+1);
+  const ownTotals={}; state.projects.forEach(p=>ownTotals[p.id]=0); state.features.forEach(f=>ownTotals[f.project_id]=(ownTotals[f.project_id]||0)+1);
+  const totalFor=id=>{let n=0;descendantProjectIds(id).forEach(pid=>n+=ownTotals[pid]||0);return n};
+  const renderTree=(appId,parentId=null,depth=0)=>{
+    const ps=state.projects.filter(p=>p.application_id===appId&&(p.parent_project_id||null)===parentId).sort((a,b)=>a.name.localeCompare(b.name));
+    return ps.map(p=>{
+      const kids=state.projects.some(x=>x.parent_project_id===p.id);
+      const inherited=projectReady(p.id)&&!projectOwnReady(p.id);
+      return `<div class="project-node"><button class="projectbtn ${activeProject===p.id?'active':''} ${depth?'subprojectbtn':''}" data-project="${p.id}" style="padding-left:${22+depth*16}px"><span class="dot"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>${projectOwnReady(p.id)?'<span class="project-lightning" title="Ready for Agent">⚡</span>':inherited?'<span class="project-lightning" title="Ready via parent">↳⚡</span>':''}<span class="count">${totalFor(p.id)}</span></button>${kids?renderTree(appId,p.id,depth+1):''}</div>`;
+    }).join('');
+  };
   const apps=[...state.applications].sort((a,b)=>{const pref=['After Effects','Cinema 4D','Standalone / Web'];const ai=pref.indexOf(a.name),bi=pref.indexOf(b.name);if(ai!==-1||bi!==-1)return (ai===-1?99:ai)-(bi===-1?99:bi);return a.name.localeCompare(b.name)});
-  $('projectList').innerHTML=apps.map(app=>{const ps=state.projects.filter(p=>p.application_id===app.id);const total=ps.reduce((n,p)=>n+(totals[p.id]||0),0);return `<div class="appgroup"><button class="apphead ${activeApp===app.id&&!activeProject?'active':''}" data-app="${app.id}"><span class="appchev">▾</span><span>${esc(app.name)}</span><span class="count">${total}</span></button>${ps.map(p=>`<button class="projectbtn ${activeProject===p.id?'active':''}" data-project="${p.id}"><span class="dot"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>${p.ready_for_agent?'<span class="project-lightning" title="Ready for Agent">⚡</span>':''}<span class="count">${totals[p.id]||0}</span></button>`).join('')}</div>`}).join('');
+  $('projectList').innerHTML=apps.map(app=>{const roots=state.projects.filter(p=>p.application_id===app.id&&!p.parent_project_id);const total=roots.reduce((n,p)=>n+totalFor(p.id),0);return `<div class="appgroup"><button class="apphead ${activeApp===app.id&&!activeProject?'active':''}" data-app="${app.id}"><span class="appchev">▾</span><span>${esc(app.name)}</span><span class="count">${total}</span></button>${renderTree(app.id)}</div>`}).join('');
   const counts={all:state.features.length,inbox:0,now:0,next:0,later:0,done:0,agent:state.features.filter(f=>projectReady(f.project_id)&&f.status!=='Done').length};
   state.features.forEach(f=>{const k=f.status.toLowerCase();if(k in counts)counts[k]++});
   Object.entries(counts).forEach(([k,v])=>{const e=$(k+'Count');if(e)e.textContent=v});
@@ -287,7 +321,11 @@ function renderSidebar(){
 }
 function renderMain(){
   const arr=visibleFeatures();let title='All Features',sub='Everything you want to build, in one place.';
-  if(activeProject){title=projectName(activeProject);sub=projectAppName(activeProject)+' · Feature backlog for this project.'}
+  if(activeProject){
+    const trail=projectTrail(activeProject);
+    title=projectName(activeProject);
+    sub=projectAppName(activeProject)+' · '+(trail.length>1?trail.map(p=>p.name).join(' › ')+' · Includes subproject features.':'Feature backlog for this project and its subprojects.');
+  }
   else if(activeApp){title=appName(activeApp);sub='All projects and features in this application.'}
   else if(activeView==='agent'){title='Agent Queue';sub='All non-Done features from projects marked Ready for Agent.'}
   else if(activeView!=='all'){title=activeView[0].toUpperCase()+activeView.slice(1);sub={inbox:'Ideas you have not prioritized yet.',now:'Features you want to focus on now.',next:'Important features queued up next.',later:'Good ideas worth keeping for later.',done:'Features you have finished.'}[activeView]}
@@ -295,21 +333,24 @@ function renderMain(){
   const agentToggle=$('projectAgentToggle');
   if(agentToggle){
     if(activeProject){
-      const on=projectReady(activeProject);
+      const own=projectOwnReady(activeProject), inherited=projectReady(activeProject)&&!own;
       agentToggle.style.display='';
-      agentToggle.textContent=on?'⚡ Agent Reading Project':'⚡ Ready for Agent';
-      agentToggle.classList.toggle('agent-on',on);
+      agentToggle.textContent=own?'⚡ Agent Reading Project':inherited?'↳⚡ Ready via Parent':'⚡ Ready for Agent';
+      agentToggle.classList.toggle('agent-on',own||inherited);
+      agentToggle.disabled=inherited;
     }else{
       agentToggle.style.display='none';
       agentToggle.classList.remove('agent-on');
+      agentToggle.disabled=false;
     }
   }
+  const editProjectBtn=$('editProjectBtn');if(editProjectBtn)editProjectBtn.style.display=activeProject?'':'none';
   $('statTotal').textContent=state.features.length;$('statNow').textContent=state.features.filter(f=>f.status==='Now').length;$('statNext').textContent=state.features.filter(f=>f.status==='Next').length;$('statDone').textContent=state.features.filter(f=>f.status==='Done').length;
   const list=$('featureList');if(!arr.length){list.innerHTML='<div class="empty"><b>No features found</b>Try another search/filter or add a new feature.</div>';return}
-  list.innerHTML=arr.map(f=>`<article class="card" data-id="${f.id}"><div><div class="card-context"><span class="context-app">${esc(projectAppName(f.project_id))}</span><span class="context-sep">›</span><span class="context-project">${esc(projectName(f.project_id))}</span>${f.area?`<span class="context-sep">›</span><span class="context-area">${esc(f.area)}</span>`:''}</div><div class="card-title">${esc(f.title)}</div><div class="card-meta"><span class="chip status-${f.status.toLowerCase()}">${esc(f.status)}</span><span class="chip priority-${f.priority.toLowerCase()}">${esc(f.priority)}</span>${projectReady(f.project_id)?'<span class="chip ready-chip">⚡ Agent Project</span>':''}${(f.tags||[]).slice(0,4).map(t=>`<span class="chip">#${esc(t)}</span>`).join('')}</div>${f.notes?`<div class="desc">${esc(f.notes)}</div>`:''}</div><div class="card-actions"><button class="tiny edit" title="Edit">✎</button></div></article>`).join('');
+  list.innerHTML=arr.map(f=>`<article class="card" data-id="${f.id}"><div><div class="card-context"><span class="context-app">${esc(projectAppName(f.project_id))}</span><span class="context-sep">›</span><span class="context-project">${esc(projectTrail(f.project_id).map(p=>p.name).join(' › '))}</span>${f.area?`<span class="context-sep">›</span><span class="context-area">${esc(f.area)}</span>`:''}</div><div class="card-title">${esc(f.title)}</div><div class="card-meta"><span class="chip status-${f.status.toLowerCase()}">${esc(f.status)}</span><span class="chip priority-${f.priority.toLowerCase()}">${esc(f.priority)}</span>${projectReady(f.project_id)?'<span class="chip ready-chip">⚡ Agent Project</span>':''}${(f.tags||[]).slice(0,4).map(t=>`<span class="chip">#${esc(t)}</span>`).join('')}</div>${f.notes?`<div class="desc">${esc(f.notes)}</div>`:''}</div><div class="card-actions"><button class="tiny edit" title="Edit">✎</button></div></article>`).join('');
   list.querySelectorAll('.card').forEach(c=>c.onclick=()=>openDrawer(c.dataset.id));
 }
-function projectOptions(selected){return state.projects.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(projectAppName(p.id))} — ${esc(p.name)}</option>`).join('')}
+function projectOptions(selected){return state.projects.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(projectAppName(p.id))} — ${esc(projectTrail(p.id).map(x=>x.name).join(' › '))}</option>`).join('')}
 function openDrawer(id=null){
   editingId=id;const f=id?state.features.find(x=>x.id===id):null;$('drawerTitle').textContent=f?'Edit Feature':'Add Feature';
   $('fTitle').value=f?.title||'';$('fProject').innerHTML=projectOptions(f?.project_id||activeProject||state.projects[0]?.id);$('fArea').value=f?.area||'';$('fStatus').value=f?.status||'Inbox';$('fPriority').value=f?.priority||'Medium';$('fTags').value=(f?.tags||[]).join(', ');$('fNotes').value=f?.notes||'';$('fAcceptance').value=f?.acceptance||'';$('fVersion').value=f?.version||'';$('fAgentNotes').value=f?.agent_notes||'';$('fFilesLikely').value=f?.files_likely||'';$('fDependencies').value=f?.dependencies||'';$('fDoNotChange').value=f?.do_not_change||'';$('deleteFeature').style.display=f?'block':'none';$('overlay').classList.add('show');$('drawer').classList.add('show');setTimeout(()=>$('fTitle').focus(),100)
@@ -323,18 +364,47 @@ async function saveFeature(){
 async function deleteFeature(){if(!editingId)return;if(!confirm('Delete this feature?'))return;const {error}=await sb.from('features').delete().eq('id',editingId);if(error){toast(error.message);return}closeDrawer();await loadCloud();toast('Feature deleted')}
 
 function applicationOptions(selected=''){const known=[...state.applications];return known.map(a=>`<option value="${a.id}" ${a.id===selected?'selected':''}>${esc(a.name)}</option>`).join('')+'<option value="__custom">New application…</option>'}
-function showProjectModal(show=true){$('modalOverlay').classList.toggle('show',show);$('projectModal').classList.toggle('show',show);if(show){$('projectName').value='';$('projectApp').innerHTML=applicationOptions(activeApp||'');if(activeApp)$('projectApp').value=activeApp;$('customAppName').value='';$('customAppField').style.display='none';$('projectRepo').value='';$('projectBranch').value='main';$('projectLocalPath').value='';$('projectAgentInstructions').value='';$('projectReadyAgent').checked=false;setTimeout(()=>$('projectName').focus(),80)}}
+function parentProjectOptions(appId,selected=''){
+  const excluded=editingProjectId?descendantProjectIds(editingProjectId):new Set();
+  return '<option value="">None — top-level project</option>'+state.projects.filter(p=>p.application_id===appId&&!excluded.has(p.id)).sort((a,b)=>a.name.localeCompare(b.name)).map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(projectTrail(p.id).map(x=>x.name).join(' › '))}</option>`).join('');
+}
+function refreshParentProjectOptions(selected=''){
+  const appId=$('projectApp').value;
+  $('projectParent').innerHTML=appId&&appId!=='__custom'?parentProjectOptions(appId,selected):'<option value="">None — top-level project</option>';
+}
+function showProjectModal(show=true,projectId=null){
+  $('modalOverlay').classList.toggle('show',show);$('projectModal').classList.toggle('show',show);
+  if(!show){editingProjectId=null;return}
+  editingProjectId=projectId;
+  const p=projectId?projectById(projectId):null;
+  $('projectModal').querySelector('h3').textContent=p?'Edit Project':'Add Project';
+  $('saveProject').textContent=p?'Save Changes':'Add Project';
+  $('projectName').value=p?.name||'';
+  $('projectApp').innerHTML=applicationOptions(p?.application_id||activeApp||'');
+  if(p?.application_id)$('projectApp').value=p.application_id;else if(activeApp)$('projectApp').value=activeApp;
+  $('customAppName').value='';$('customAppField').style.display='none';
+  refreshParentProjectOptions(p?.parent_project_id||'');
+  $('projectRepo').value=p?.repo_url||'';
+  $('projectBranch').value=p?.branch||'main';
+  $('projectLocalPath').value=p?.local_path||'';
+  $('projectAgentInstructions').value=p?.agent_instructions||'';
+  $('projectReadyAgent').checked=!!p?.ready_for_agent;
+  setTimeout(()=>$('projectName').focus(),80);
+}
 async function addProject(){
   const name=$('projectName').value.trim();if(!name){toast('Give the project a name');return}
   let appId=$('projectApp').value;if(appId==='__custom'){const appName=$('customAppName').value.trim();if(!appName){toast('Give the application a name');return}const {data,error}=await sb.from('applications').insert({user_id:currentUser(),name:appName}).select().single();if(error){toast(error.message);return}appId=data.id}
-  const row={user_id:currentUser(),application_id:appId,name,repo_url:$('projectRepo').value.trim(),branch:$('projectBranch').value.trim()||'main',local_path:$('projectLocalPath').value.trim(),agent_instructions:$('projectAgentInstructions').value.trim(),ready_for_agent:$('projectReadyAgent').checked};
-  const {data,error}=await sb.from('projects').insert(row).select().single();if(error){toast(error.message);return}showProjectModal(false);activeProject=data.id;activeApp=null;await loadCloud();toast('Project added')
+  const parentId=$('projectParent').value||null;
+  const row={user_id:currentUser(),application_id:appId,parent_project_id:parentId,name,repo_url:$('projectRepo').value.trim(),branch:$('projectBranch').value.trim()||'main',local_path:$('projectLocalPath').value.trim(),agent_instructions:$('projectAgentInstructions').value.trim(),ready_for_agent:$('projectReadyAgent').checked,updated_at:new Date().toISOString()};
+  const q=editingProjectId?sb.from('projects').update(row).eq('id',editingProjectId):sb.from('projects').insert(row).select().single();
+  const {data,error}=await q;if(error){toast(error.message);return}
+  const savedId=editingProjectId||data?.id;showProjectModal(false);activeProject=savedId;activeApp=null;await loadCloud();toast(editingProjectId?'Project updated':'Project added')
 }
 
 async function toggleActiveProjectAgent(){
   if(!activeProject)return;
   const project=state.projects.find(p=>p.id===activeProject); if(!project)return;
-  const next=!project.ready_for_agent;
+  const next=!projectOwnReady(activeProject);
   const {error}=await sb.from('projects').update({ready_for_agent:next,updated_at:new Date().toISOString()}).eq('id',activeProject);
   if(error){toast(error.message);return}
   await loadCloud();
@@ -370,7 +440,7 @@ document.querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{activeProject=nul
 $('newFeatureBtn').onclick=()=>openDrawer();$('closeDrawer').onclick=closeDrawer;$('cancelFeature').onclick=closeDrawer;$('overlay').onclick=closeDrawer;$('saveFeature').onclick=saveFeature;$('deleteFeature').onclick=deleteFeature;
 $('projectAgentToggle').onclick=toggleActiveProjectAgent;
 $('searchInput').oninput=renderMain;$('priorityFilter').onchange=renderMain;$('sortSelect').onchange=renderMain;
-$('addProjectBtn').onclick=()=>showProjectModal(true);$('newProjectTopBtn').onclick=()=>showProjectModal(true);$('projectApp').onchange=e=>{$('customAppField').style.display=e.target.value==='__custom'?'block':'none';if(e.target.value==='__custom')setTimeout(()=>$('customAppName').focus(),40)};$('cancelProject').onclick=()=>showProjectModal(false);$('modalOverlay').onclick=()=>showProjectModal(false);$('saveProject').onclick=addProject;$('projectName').onkeydown=e=>{if(e.key==='Enter')addProject()};
+$('addProjectBtn').onclick=()=>showProjectModal(true);$('newProjectTopBtn').onclick=()=>showProjectModal(true);$('editProjectBtn').onclick=()=>{if(activeProject)showProjectModal(true,activeProject)};$('projectApp').onchange=e=>{$('customAppField').style.display=e.target.value==='__custom'?'block':'none';refreshParentProjectOptions();if(e.target.value==='__custom')setTimeout(()=>$('customAppName').focus(),40)};$('cancelProject').onclick=()=>showProjectModal(false);$('modalOverlay').onclick=()=>showProjectModal(false);$('saveProject').onclick=addProject;$('projectName').onkeydown=e=>{if(e.key==='Enter')addProject()};
 $('exportBtn').onclick=exportData;$('importBtn').onclick=()=>$('importFile').click();$('importFile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('searchInput').focus()}if(e.key==='Escape'){closeDrawer();showProjectModal(false)}});
 init();
