@@ -14,6 +14,7 @@ create table if not exists projects (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   application_id uuid references applications(id) on delete set null,
+  parent_project_id uuid references projects(id) on delete set null,
   name text not null,
   repo_url text default '',
   local_path text default '',
@@ -58,6 +59,7 @@ create policy "features_owner_all" on features for all using (auth.uid() = user_
 
 create index if not exists projects_user_idx on projects(user_id);
 create index if not exists projects_application_idx on projects(application_id);
+create index if not exists projects_parent_idx on projects(parent_project_id);
 create index if not exists projects_ready_idx on projects(user_id, ready_for_agent) where ready_for_agent = true;
 create index if not exists features_user_idx on features(user_id);
 create index if not exists features_project_idx on features(project_id);
