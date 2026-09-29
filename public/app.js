@@ -344,7 +344,10 @@ function renderMain(){
       agentToggle.disabled=false;
     }
   }
-  const editProjectBtn=$('editProjectBtn');if(editProjectBtn)editProjectBtn.style.display=activeProject?'':'none';
+  const editProjectBtn=$('editProjectBtn'), moveProjectBtn=$('moveProjectBtn'), deleteProjectBtn=$('deleteProjectBtn');
+  if(editProjectBtn)editProjectBtn.style.display=activeProject?'':'none';
+  if(moveProjectBtn)moveProjectBtn.style.display=activeProject?'':'none';
+  if(deleteProjectBtn)deleteProjectBtn.style.display=activeProject?'':'none';
   $('statTotal').textContent=state.features.length;$('statNow').textContent=state.features.filter(f=>f.status==='Now').length;$('statNext').textContent=state.features.filter(f=>f.status==='Next').length;$('statDone').textContent=state.features.filter(f=>f.status==='Done').length;
   const list=$('featureList');if(!arr.length){list.innerHTML='<div class="empty"><b>No features found</b>Try another search/filter or add a new feature.</div>';return}
   list.innerHTML=arr.map(f=>`<article class="card" data-id="${f.id}"><div><div class="card-context"><span class="context-app">${esc(projectAppName(f.project_id))}</span><span class="context-sep">›</span><span class="context-project">${esc(projectTrail(f.project_id).map(p=>p.name).join(' › '))}</span>${f.area?`<span class="context-sep">›</span><span class="context-area">${esc(f.area)}</span>`:''}</div><div class="card-title">${esc(f.title)}</div><div class="card-meta"><span class="chip status-${f.status.toLowerCase()}">${esc(f.status)}</span><span class="chip priority-${f.priority.toLowerCase()}">${esc(f.priority)}</span>${projectReady(f.project_id)?'<span class="chip ready-chip">⚡ Agent Project</span>':''}${(f.tags||[]).slice(0,4).map(t=>`<span class="chip">#${esc(t)}</span>`).join('')}</div>${f.notes?`<div class="desc">${esc(f.notes)}</div>`:''}</div><div class="card-actions"><button class="tiny edit" title="Edit">✎</button></div></article>`).join('');
@@ -379,6 +382,7 @@ function showProjectModal(show=true,projectId=null){
   const p=projectId?projectById(projectId):null;
   $('projectModal').querySelector('h3').textContent=p?'Edit Project':'Add Project';
   $('saveProject').textContent=p?'Save Changes':'Add Project';
+  $('deleteProjectModalBtn').style.display=p?'':'none';
   $('projectName').value=p?.name||'';
   $('projectApp').innerHTML=applicationOptions(p?.application_id||activeApp||'');
   if(p?.application_id)$('projectApp').value=p.application_id;else if(activeApp)$('projectApp').value=activeApp;
@@ -401,6 +405,46 @@ async function addProject(){
   const wasEditing=!!editingProjectId;
   const savedId=editingProjectId||data?.id;
   showProjectModal(false);activeProject=savedId;activeApp=null;await loadCloud();toast(wasEditing?'Project updated':'Project added')
+}
+
+
+async function deleteProject(projectId=editingProjectId||activeProject){
+  if(!projectId)return;
+  const p=projectById(projectId); if(!p)return;
+
+  const directChildren=state.projects.filter(x=>x.parent_project_id===projectId);
+  const ownFeatures=state.features.filter(f=>f.project_id===projectId);
+  const childText=directChildren.length?directChildren.length+' subproject'+(directChildren.length===1?'':'s')+' will move up one level. ':'';
+  const featureText=ownFeatures.length?ownFeatures.length+' feature'+(ownFeatures.length===1?'':'s')+' in this project will be permanently deleted. ':'';
+  const warning=(childText+featureText+'Delete "'+p.name+'"?').trim();
+
+  if(!confirm(warning))return;
+
+  if(directChildren.length){
+    const {error:childErr}=await sb.from('projects').update({
+      parent_project_id:p.parent_project_id||null,
+      updated_at:new Date().toISOString()
+    }).in('id',directChildren.map(x=>x.id));
+    if(childErr){toast(childErr.message);return}
+  }
+
+  const {error}=await sb.from('projects').delete().eq('id',projectId);
+  if(error){toast(error.message);return}
+
+  showProjectModal(false);
+  activeProject=p.parent_project_id||null;
+  activeApp=p.parent_project_id?null:p.application_id;
+  await loadCloud();
+  toast('Project deleted');
+}
+
+function moveActiveProject(){
+  if(!activeProject)return;
+  showProjectModal(true,activeProject);
+  setTimeout(()=>{
+    const field=$('projectParent');
+    if(field){field.focus();field.scrollIntoView({block:'center',behavior:'smooth'})}
+  },120);
 }
 
 async function toggleActiveProjectAgent(){
@@ -442,7 +486,7 @@ document.querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{activeProject=nul
 $('newFeatureBtn').onclick=()=>openDrawer();$('closeDrawer').onclick=closeDrawer;$('cancelFeature').onclick=closeDrawer;$('overlay').onclick=closeDrawer;$('saveFeature').onclick=saveFeature;$('deleteFeature').onclick=deleteFeature;
 $('projectAgentToggle').onclick=toggleActiveProjectAgent;
 $('searchInput').oninput=renderMain;$('priorityFilter').onchange=renderMain;$('sortSelect').onchange=renderMain;
-$('addProjectBtn').onclick=()=>showProjectModal(true);$('newProjectTopBtn').onclick=()=>showProjectModal(true);$('editProjectBtn').onclick=()=>{if(activeProject)showProjectModal(true,activeProject)};$('projectApp').onchange=e=>{$('customAppField').style.display=e.target.value==='__custom'?'block':'none';refreshParentProjectOptions();if(e.target.value==='__custom')setTimeout(()=>$('customAppName').focus(),40)};$('cancelProject').onclick=()=>showProjectModal(false);$('modalOverlay').onclick=()=>showProjectModal(false);$('saveProject').onclick=addProject;$('projectName').onkeydown=e=>{if(e.key==='Enter')addProject()};
+$('addProjectBtn').onclick=()=>showProjectModal(true);$('newProjectTopBtn').onclick=()=>showProjectModal(true);$('editProjectBtn').onclick=()=>{if(activeProject)showProjectModal(true,activeProject)};$('moveProjectBtn').onclick=moveActiveProject;$('deleteProjectBtn').onclick=()=>deleteProject(activeProject);$('deleteProjectModalBtn').onclick=()=>deleteProject(editingProjectId);$('projectApp').onchange=e=>{$('customAppField').style.display=e.target.value==='__custom'?'block':'none';refreshParentProjectOptions();if(e.target.value==='__custom')setTimeout(()=>$('customAppName').focus(),40)};$('cancelProject').onclick=()=>showProjectModal(false);$('modalOverlay').onclick=()=>showProjectModal(false);$('saveProject').onclick=addProject;$('projectName').onkeydown=e=>{if(e.key==='Enter')addProject()};
 $('exportBtn').onclick=exportData;$('importBtn').onclick=()=>$('importFile').click();$('importFile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('searchInput').focus()}if(e.key==='Escape'){closeDrawer();showProjectModal(false)}});
 init();
