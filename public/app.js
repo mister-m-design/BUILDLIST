@@ -398,7 +398,9 @@ async function addProject(){
   const row={user_id:currentUser(),application_id:appId,parent_project_id:parentId,name,repo_url:$('projectRepo').value.trim(),branch:$('projectBranch').value.trim()||'main',local_path:$('projectLocalPath').value.trim(),agent_instructions:$('projectAgentInstructions').value.trim(),ready_for_agent:$('projectReadyAgent').checked,updated_at:new Date().toISOString()};
   const q=editingProjectId?sb.from('projects').update(row).eq('id',editingProjectId):sb.from('projects').insert(row).select().single();
   const {data,error}=await q;if(error){toast(error.message);return}
-  const savedId=editingProjectId||data?.id;showProjectModal(false);activeProject=savedId;activeApp=null;await loadCloud();toast(editingProjectId?'Project updated':'Project added')
+  const wasEditing=!!editingProjectId;
+  const savedId=editingProjectId||data?.id;
+  showProjectModal(false);activeProject=savedId;activeApp=null;await loadCloud();toast(wasEditing?'Project updated':'Project added')
 }
 
 async function toggleActiveProjectAgent(){
