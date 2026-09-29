@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Buildlist</title>
+<link rel="stylesheet" href="./styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./config.js"></script>
+</head>
+<body>
+<div id="authGate" class="auth-gate">
+  <div class="auth-card">
+    <div class="logo">B</div>
+    <h1>Buildlist</h1>
+    <p>Sign in to your shared feature command center.</p>
+    <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" />
+    <button id="authButton" class="primary">Email me a sign-in link</button>
+    <div id="authMessage" class="auth-message"></div>
+  </div>
+</div>
+<div id="appShell" hidden>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">B</div><div><h1>Buildlist</h1><small>Personal feature backlog</small></div></div>
+    <div class="side-scroll">
+      <div class="side-label">Views</div>
+      <button class="navbtn active" data-view="all">◫ All Features <span class="count" id="allCount">0</span></button>
+      <button class="navbtn" data-view="inbox">◇ Inbox <span class="count" id="inboxCount">0</span></button>
+      <button class="navbtn" data-view="now">● Now <span class="count" id="nowCount">0</span></button>
+      <button class="navbtn" data-view="next">→ Next <span class="count" id="nextCount">0</span></button>
+      <button class="navbtn" data-view="later">○ Later <span class="count" id="laterCount">0</span></button>
+      <button class="navbtn" data-view="done">✓ Done <span class="count" id="doneCount">0</span></button>
+      <button class="navbtn" data-view="agent">⚡ Agent Queue <span class="count" id="agentCount">0</span></button>
+      <div class="projects-head"><div class="side-label">Projects</div><button class="iconbtn" id="addProjectBtn" title="Add project">＋</button></div>
+      <div id="projectList"></div>
+    </div>
+    <div class="sidebar-foot">
+      <button class="side-action" id="exportBtn">Export</button>
+      <button class="side-action" id="importBtn">Import</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden />
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="search"><span class="glass">⌕</span><input id="searchInput" placeholder="Search features, projects, tags, notes…" autocomplete="off"/><span class="key">⌘ K</span></div>
+      <button class="secondary" id="newProjectTopBtn">＋ New Project</button>
+      <button class="ghost" id="logoutBtn">Sign out</button>
+      <button class="primary" id="newFeatureBtn">＋ Add Feature</button>
+    </div>
+    <div class="content">
+      <div class="header"><div><h2 id="pageTitle">All Features</h2><div class="sub" id="pageSub">Everything you want to build, in one place.</div></div>
+        <div class="viewtools"><select class="filter" id="priorityFilter"><option value="all">All priorities</option><option>High</option><option>Medium</option><option>Low</option></select><select class="filter" id="sortSelect"><option value="updated">Recently updated</option><option value="created">Recently added</option><option value="priority">Priority</option><option value="title">Title A–Z</option></select></div>
+      </div>
+      <div class="stats"><div class="stat"><strong id="statTotal">0</strong><span>Total</span></div><div class="stat"><strong id="statNow">0</strong><span>Now</span></div><div class="stat"><strong id="statNext">0</strong><span>Next</span></div><div class="stat"><strong id="statDone">0</strong><span>Done</span></div></div>
+      <div class="listwrap"><div id="featureList" class="feature-list"></div></div>
+    </div>
+  </main>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<section class="drawer" id="drawer">
+  <div class="drawer-head"><button class="iconbtn" id="closeDrawer">✕</button><h3 id="drawerTitle">Add Feature</h3></div>
+  <div class="drawer-body">
+    <div class="field"><label>Feature</label><input id="fTitle" placeholder="What do you want to add?" /></div>
+    <div class="grid2"><div class="field"><label>Project</label><select id="fProject"></select></div><div class="field"><label>Area</label><input id="fArea" placeholder="Library, UI, Search…" /></div></div>
+    <div class="grid2"><div class="field"><label>Status</label><select id="fStatus"><option>Inbox</option><option>Now</option><option>Next</option><option>Later</option><option>Done</option></select></div><div class="field"><label>Priority</label><select id="fPriority"><option>Medium</option><option>High</option><option>Low</option></select></div></div>
+    <div class="field"><label>Tags</label><input id="fTags" placeholder="drag-drop, organization, UI" /></div>
+    <div class="field"><label>Feature Notes / Specification</label><textarea id="fNotes" placeholder="Describe how you want this to work…"></textarea></div>
+    <div class="field"><label>Done When / Expected Behavior</label><textarea id="fAcceptance" placeholder="What would make this feature complete?"></textarea></div>
+    <div class="field"><label>Target Version (optional)</label><input id="fVersion" placeholder="0.4, 1.0, Later…" /></div>
+    <div class="agent-section">
+      <label class="checkline"><input type="checkbox" id="fReadyAgent" /> <strong>Ready for Agent</strong> — expose this feature in the agent feed</label>
+    </div>
+    <div class="field"><label>Agent Notes</label><textarea id="fAgentNotes" placeholder="Anything the coding agent should know…"></textarea></div>
+    <div class="field"><label>Files likely involved</label><input id="fFilesLikely" placeholder="plugin.py, ui/, scripts/…" /></div>
+    <div class="grid2"><div class="field"><label>Dependencies</label><textarea id="fDependencies" placeholder="Depends on…"></textarea></div><div class="field"><label>Do Not Change</label><textarea id="fDoNotChange" placeholder="Existing behavior that must stay intact…"></textarea></div></div>
+  </div>
+  <div class="drawer-foot"><button class="danger" id="deleteFeature" style="display:none">Delete</button><button class="secondary" id="cancelFeature">Cancel</button><button class="primary" id="saveFeature">Save Feature</button></div>
+</section>
+
+<div class="overlay" id="modalOverlay" style="z-index:30"></div>
+<div class="modal" id="projectModal"><h3>Add Project</h3><div class="modal-body" style="display:grid;gap:14px">
+  <div class="field"><label>Project name</label><input id="projectName" placeholder="e.g. Material Browser" /></div>
+  <div class="field"><label>Application</label><select id="projectApp"><option>After Effects</option><option>Cinema 4D</option><option>Standalone / Web</option><option value="__custom">New application…</option></select></div>
+  <div class="field" id="customAppField" style="display:none"><label>New application name</label><input id="customAppName" placeholder="e.g. Unreal Engine" /></div>
+  <div class="field"><label>Repository URL</label><input id="projectRepo" placeholder="https://github.com/you/repo" /></div>
+  <div class="grid2"><div class="field"><label>Branch</label><input id="projectBranch" value="main" /></div><div class="field"><label>Local path (optional)</label><input id="projectLocalPath" placeholder="/Users/.../project" /></div></div>
+  <div class="field"><label>Agent Instructions</label><textarea id="projectAgentInstructions" placeholder="Project-wide instructions for coding agents…"></textarea></div>
+</div><div class="modal-foot"><button class="secondary" id="cancelProject">Cancel</button><button class="primary" id="saveProject">Add Project</button></div></div>
+<div class="toast" id="toast"></div>
+</div>
+<script src="./app.js"></script>
+</body>
+</html>
