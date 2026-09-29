@@ -17,7 +17,13 @@
     <input id="authEmail" type="email" placeholder="you@example.com" autocomplete="email" />
     <input id="authPassword" type="password" placeholder="Password" autocomplete="current-password" />
     <button id="authButton" class="primary">Sign In</button>
-    <button id="magicLinkButton" class="secondary">Use one-time sign-in link</button>
+    <button id="passwordSetupToggle" class="secondary">Create / Reset Password</button>
+    <div id="passwordSetupPanel" style="display:none;gap:10px">
+      <input id="setupToken" type="password" placeholder="Agent feed token" autocomplete="off" />
+      <input id="setupPassword" type="password" placeholder="New password" autocomplete="new-password" />
+      <input id="setupPasswordConfirm" type="password" placeholder="Confirm new password" autocomplete="new-password" />
+      <button id="setupPasswordButton" class="secondary">Set Password</button>
+    </div>
     <div id="authMessage" class="auth-message"></div>
   </div>
 </div>
