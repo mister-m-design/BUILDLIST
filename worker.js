@@ -62,11 +62,63 @@ async function agentTasks(request, env) {
   );
 }
 
+
+async function setPassword(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  const expected = `Bearer ${env.AGENT_FEED_TOKEN || ""}`;
+  if (!env.AGENT_FEED_TOKEN || auth !== expected) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const base = env.SUPABASE_URL;
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
+  const user = env.AGENT_USER_ID;
+  if (!base || !key || !user) {
+    return Response.json({ error: "Server not configured" }, { status: 500 });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "Invalid request" }, { status: 400 });
+  }
+
+  const password = String(body?.password || "");
+  if (password.length < 8) {
+    return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+  }
+
+  const response = await fetch(`${base}/auth/v1/admin/users/${encodeURIComponent(user)}`, {
+    method: "PUT",
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ password })
+  });
+
+  if (!response.ok) {
+    let detail = "Password update failed";
+    try {
+      const data = await response.json();
+      detail = data?.msg || data?.message || data?.error_description || detail;
+    } catch {}
+    return Response.json({ error: detail }, { status: response.status });
+  }
+
+  return Response.json({ ok: true });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/api/agent/tasks" && request.method === "GET") {
       return agentTasks(request, env);
+    }
+    if (url.pathname === "/api/auth/set-password" && request.method === "POST") {
+      return setPassword(request, env);
     }
     return env.ASSETS.fetch(request);
   }
