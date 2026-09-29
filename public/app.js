@@ -36,13 +36,31 @@ async function routeAuth(){
   if(logged) await loadCloud();
 }
 async function login(){
-  const email=$('authEmail').value.trim(); if(!email)return;
-  $('authMessage').textContent='Sending sign-in link…';
+  const email=$('authEmail').value.trim();
+  const password=$('authPassword').value;
+  if(!email||!password){$('authMessage').textContent='Enter your email and password.';return}
+  $('authMessage').textContent='Signing in…';
+  const {error}=await sb.auth.signInWithPassword({email,password});
+  $('authMessage').textContent=error?error.message:'';
+}
+async function sendMagicLink(){
+  const email=$('authEmail').value.trim(); if(!email){$('authMessage').textContent='Enter your email first.';return}
+  $('authMessage').textContent='Sending one-time sign-in link…';
   const {error}=await sb.auth.signInWithOtp({
     email,
     options:{emailRedirectTo:'https://buildlist.mmurtha.workers.dev'}
   });
-  $('authMessage').textContent=error?error.message:'Check your email for the sign-in link.';
+  $('authMessage').textContent=error?error.message:'Check your email for the one-time link. After signing in, click Set Password.';
+}
+async function setPassword(){
+  const password=prompt('Choose a new Buildlist password (at least 8 characters):');
+  if(password===null)return;
+  if(password.length<8){toast('Password must be at least 8 characters');return}
+  const confirmPassword=prompt('Enter the new password again:');
+  if(confirmPassword!==password){toast('Passwords do not match');return}
+  const {error}=await sb.auth.updateUser({password});
+  if(error){toast(error.message);return}
+  toast('Password set. You can use email + password from now on.');
 }
 async function logout(){await sb.auth.signOut()}
 
@@ -308,7 +326,12 @@ async function importLegacyObject(x){
 function exportData(){const payload={applications:state.applications,projects:state.projects,features:state.features,exportedAt:new Date().toISOString()};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Buildlist-cloud-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(a.href);toast('Backup exported')}
 function importData(file){const r=new FileReader();r.onload=async()=>{try{const x=JSON.parse(r.result);if(Array.isArray(x.applications)){toast('Cloud backup import is not enabled yet; use a legacy Buildlist export for migration.');return}await importLegacyObject(x);toast('Local Buildlist imported to cloud')}catch(e){toast(e.message||'Import failed')}};r.readAsText(file)}
 
-$('authButton').onclick=login;$('authEmail').onkeydown=e=>{if(e.key==='Enter')login()};$('logoutBtn').onclick=logout;
+$('authButton').onclick=login;
+$('magicLinkButton').onclick=sendMagicLink;
+$('authEmail').onkeydown=e=>{if(e.key==='Enter')login()};
+$('authPassword').onkeydown=e=>{if(e.key==='Enter')login()};
+$('setPasswordBtn').onclick=setPassword;
+$('logoutBtn').onclick=logout;
 document.querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{activeProject=null;activeApp=null;activeView=b.dataset.view;render()});
 $('newFeatureBtn').onclick=()=>openDrawer();$('closeDrawer').onclick=closeDrawer;$('cancelFeature').onclick=closeDrawer;$('overlay').onclick=closeDrawer;$('saveFeature').onclick=saveFeature;$('deleteFeature').onclick=deleteFeature;
 $('projectAgentToggle').onclick=toggleActiveProjectAgent;
