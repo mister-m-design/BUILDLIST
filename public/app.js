@@ -301,6 +301,8 @@ function visibleFeatures(){
 }
 
 function featureById(id){return state.features.find(f=>f.id===id)}
+function openNotesForFeature(id){return state.agentNotes.filter(n=>n.feature_id===id&&!n.resolved)}
+function outcomeLabel(n){return n.outcome||'Update'}
 function formatNoteTime(value){
   if(!value)return '';
   try{return new Date(value).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}catch{return value}
@@ -313,7 +315,7 @@ function visibleAgentNotes(){
   const q=$('searchInput').value.trim().toLowerCase();
   if(q)notes=notes.filter(n=>{
     const f=featureById(n.feature_id);
-    return [n.note,n.agent,f?.title,projectName(f?.project_id),projectAppName(f?.project_id)].join(' ').toLowerCase().includes(q);
+    return [n.note,n.reason,n.outcome,n.task_status,n.agent,f?.title,projectName(f?.project_id),projectAppName(f?.project_id)].join(' ').toLowerCase().includes(q);
   });
   return notes;
 }
@@ -340,12 +342,14 @@ function renderAgentNotes(){
     const f=featureById(n.feature_id);
     const project=f?projectName(f.project_id):'Unknown Project';
     const app=f?projectAppName(f.project_id):'';
-    return `<article class="card note-card ${n.resolved?'note-resolved':''}" data-note-id="${n.id}">
+    const outcome=outcomeLabel(n);
+    return `<article class="card note-card ${n.resolved?'note-resolved':'note-pending'} outcome-${outcome.toLowerCase()}" data-note-id="${n.id}">
       <div>
         <div class="card-context"><span class="context-app">${esc(app)}</span><span class="context-sep">›</span><span class="context-project">${esc(project)}</span>${f?'<span class="context-sep">›</span><span class="context-area">'+esc(f.title)+'</span>':''}</div>
         <div class="card-title">${esc(n.agent||'Agent')} <span class="note-time">${esc(formatNoteTime(n.created_at))}</span></div>
+        <div class="card-meta"><span class="chip outcome-chip outcome-${outcome.toLowerCase()}">${esc(outcome)}</span>${n.task_status?'<span class="chip">Task: '+esc(n.task_status)+'</span>':''}<span class="chip ${n.resolved?'status-done':'status-now'}">${n.resolved?'Resolved':'Needs Review'}</span></div>
         <div class="desc note-body">${esc(n.note||'')}</div>
-        <div class="card-meta"><span class="chip ${n.resolved?'status-done':'status-now'}">${n.resolved?'Resolved':'Open'}</span></div>
+        ${n.reason?'<div class="note-reason"><strong>Why:</strong> '+esc(n.reason)+'</div>':''}
       </div>
       <div class="card-actions note-actions">
         ${f?'<button class="secondary note-open-feature" data-feature-id="'+f.id+'">Open Feature</button>':''}
@@ -390,6 +394,8 @@ function renderSidebar(){
   const counts={all:state.features.length,inbox:0,now:0,next:0,later:0,done:0,agent:state.features.filter(f=>projectReady(f.project_id)&&f.status!=='Done').length,notes:state.agentNotes.filter(n=>!n.resolved).length};
   state.features.forEach(f=>{const k=f.status.toLowerCase();if(k in counts)counts[k]++});
   Object.entries(counts).forEach(([k,v])=>{const e=$(k+'Count');if(e)e.textContent=v});
+  const notesNav=document.querySelector('.navbtn[data-view="notes"]');
+  if(notesNav)notesNav.classList.toggle('has-pending-notes',counts.notes>0);
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',!activeProject&&!activeApp&&b.dataset.view===activeView));
   document.querySelectorAll('.projectbtn').forEach(b=>b.onclick=()=>{activeProject=b.dataset.project;activeApp=null;activeView='all';render()});
   document.querySelectorAll('.apphead').forEach(b=>b.onclick=()=>{activeProject=null;activeApp=b.dataset.app;activeView='all';render()});
@@ -426,7 +432,7 @@ function renderMain(){
   if(deleteProjectBtn)deleteProjectBtn.style.display=activeProject?'':'none';
   $('statTotal').textContent=state.features.length;$('statNow').textContent=state.features.filter(f=>f.status==='Now').length;$('statNext').textContent=state.features.filter(f=>f.status==='Next').length;$('statDone').textContent=state.features.filter(f=>f.status==='Done').length;
   const list=$('featureList');if(!arr.length){list.innerHTML='<div class="empty"><b>No features found</b>Try another search/filter or add a new feature.</div>';return}
-  list.innerHTML=arr.map(f=>`<article class="card" data-id="${f.id}"><div><div class="card-context"><span class="context-app">${esc(projectAppName(f.project_id))}</span><span class="context-sep">›</span><span class="context-project">${esc(projectTrail(f.project_id).map(p=>p.name).join(' › '))}</span>${f.area?`<span class="context-sep">›</span><span class="context-area">${esc(f.area)}</span>`:''}</div><div class="card-title">${esc(f.title)}</div><div class="card-meta"><span class="chip status-${f.status.toLowerCase()}">${esc(f.status)}</span><span class="chip priority-${f.priority.toLowerCase()}">${esc(f.priority)}</span>${projectReady(f.project_id)?'<span class="chip ready-chip">⚡ Agent Project</span>':''}${(f.tags||[]).slice(0,4).map(t=>`<span class="chip">#${esc(t)}</span>`).join('')}</div>${f.notes?`<div class="desc">${esc(f.notes)}</div>`:''}</div><div class="card-actions"><button class="tiny edit" title="Edit">✎</button></div></article>`).join('');
+  list.innerHTML=arr.map(f=>{const pending=openNotesForFeature(f.id);return `<article class="card ${pending.length?'has-agent-notes':''}" data-id="${f.id}"><div><div class="card-context"><span class="context-app">${esc(projectAppName(f.project_id))}</span><span class="context-sep">›</span><span class="context-project">${esc(projectTrail(f.project_id).map(p=>p.name).join(' › '))}</span>${f.area?`<span class="context-sep">›</span><span class="context-area">${esc(f.area)}</span>`:''}</div><div class="card-title">${esc(f.title)}</div><div class="card-meta"><span class="chip status-${f.status.toLowerCase()}">${esc(f.status)}</span><span class="chip priority-${f.priority.toLowerCase()}">${esc(f.priority)}</span>${pending.length?'<span class="chip pending-note-chip">✎ '+pending.length+' Agent Note'+(pending.length===1?'':'s')+'</span>':''}${projectReady(f.project_id)?'<span class="chip ready-chip">⚡ Agent Project</span>':''}${(f.tags||[]).slice(0,4).map(t=>`<span class="chip">#${esc(t)}</span>`).join('')}</div>${f.notes?`<div class="desc">${esc(f.notes)}</div>`:''}</div><div class="card-actions"><button class="tiny edit" title="Edit">✎</button></div></article>`}).join('');
   list.querySelectorAll('.card').forEach(c=>c.onclick=()=>openDrawer(c.dataset.id));
 }
 function projectOptions(selected){return state.projects.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(projectAppName(p.id))} — ${esc(projectTrail(p.id).map(x=>x.name).join(' › '))}</option>`).join('')}
