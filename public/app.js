@@ -12,6 +12,7 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show')
 function appName(id){return state.applications.find(a=>a.id===id)?.name||'Other'}
 function projectName(id){return state.projects.find(p=>p.id===id)?.name||'No Project'}
 function projectAppName(projectId){const p=state.projects.find(p=>p.id===projectId);return p?appName(p.application_id):'Other'}
+function projectReady(projectId){return !!state.projects.find(p=>p.id===projectId)?.ready_for_agent}
 function currentUser(){return session?.user?.id}
 
 async function init(){
@@ -98,8 +99,9 @@ async function seedLegacyBuildlist(){
         branch:'main',
         agent_instructions:'',
         repo_url:'',
-        local_path:''
-      })))
+        local_path:'',
+      ready_for_agent:false
+    })))
       .select();
     if(retryErr){toast(retryErr.message);return}
     return seedLegacyFeatures(uid,retryProjects||[],legacyProjects);
@@ -197,7 +199,7 @@ function visibleFeatures(){
   let a=[...state.features];
   if(activeProject)a=a.filter(f=>f.project_id===activeProject);
   else if(activeApp)a=a.filter(f=>state.projects.find(p=>p.id===f.project_id)?.application_id===activeApp);
-  else if(activeView==='agent')a=a.filter(f=>f.ready_for_agent && f.status!=='Done');
+  else if(activeView==='agent')a=a.filter(f=>projectReady(f.project_id) && f.status!=='Done');
   else if(activeView!=='all')a=a.filter(f=>f.status.toLowerCase()===activeView);
   const q=$('searchInput').value.trim().toLowerCase();
   if(q)a=a.filter(f=>[f.title,projectName(f.project_id),projectAppName(f.project_id),f.area,f.status,f.priority,f.notes,f.acceptance,f.version,f.agent_notes,f.files_likely,f.dependencies,f.do_not_change,(f.tags||[]).join(' ')].join(' ').toLowerCase().includes(q));
@@ -213,8 +215,8 @@ function render(){renderSidebar();renderMain()}
 function renderSidebar(){
   const totals={}; state.projects.forEach(p=>totals[p.id]=0); state.features.forEach(f=>totals[f.project_id]=(totals[f.project_id]||0)+1);
   const apps=[...state.applications].sort((a,b)=>{const pref=['After Effects','Cinema 4D','Standalone / Web'];const ai=pref.indexOf(a.name),bi=pref.indexOf(b.name);if(ai!==-1||bi!==-1)return (ai===-1?99:ai)-(bi===-1?99:bi);return a.name.localeCompare(b.name)});
-  $('projectList').innerHTML=apps.map(app=>{const ps=state.projects.filter(p=>p.application_id===app.id);const total=ps.reduce((n,p)=>n+(totals[p.id]||0),0);return `<div class="appgroup"><button class="apphead ${activeApp===app.id&&!activeProject?'active':''}" data-app="${app.id}"><span class="appchev">▾</span><span>${esc(app.name)}</span><span class="count">${total}</span></button>${ps.map(p=>`<button class="projectbtn ${activeProject===p.id?'active':''}" data-project="${p.id}"><span class="dot"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span><span class="count">${totals[p.id]||0}</span></button>`).join('')}</div>`}).join('');
-  const counts={all:state.features.length,inbox:0,now:0,next:0,later:0,done:0,agent:state.features.filter(f=>f.ready_for_agent&&f.status!=='Done').length};
+  $('projectList').innerHTML=apps.map(app=>{const ps=state.projects.filter(p=>p.application_id===app.id);const total=ps.reduce((n,p)=>n+(totals[p.id]||0),0);return `<div class="appgroup"><button class="apphead ${activeApp===app.id&&!activeProject?'active':''}" data-app="${app.id}"><span class="appchev">▾</span><span>${esc(app.name)}</span><span class="count">${total}</span></button>${ps.map(p=>`<button class="projectbtn ${activeProject===p.id?'active':''}" data-project="${p.id}"><span class="dot"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.name)}</span>${p.ready_for_agent?'<span class="project-lightning" title="Ready for Agent">⚡</span>':''}<span class="count">${totals[p.id]||0}</span></button>`).join('')}</div>`}).join('');
+  const counts={all:state.features.length,inbox:0,now:0,next:0,later:0,done:0,agent:state.features.filter(f=>projectReady(f.project_id)&&f.status!=='Done').length};
   state.features.forEach(f=>{const k=f.status.toLowerCase();if(k in counts)counts[k]++});
   Object.entries(counts).forEach(([k,v])=>{const e=$(k+'Count');if(e)e.textContent=v});
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',!activeProject&&!activeApp&&b.dataset.view===activeView));
@@ -225,34 +227,56 @@ function renderMain(){
   const arr=visibleFeatures();let title='All Features',sub='Everything you want to build, in one place.';
   if(activeProject){title=projectName(activeProject);sub=projectAppName(activeProject)+' · Feature backlog for this project.'}
   else if(activeApp){title=appName(activeApp);sub='All projects and features in this application.'}
-  else if(activeView==='agent'){title='Agent Queue';sub='Features explicitly marked Ready for Agent.'}
+  else if(activeView==='agent'){title='Agent Queue';sub='All non-Done features from projects marked Ready for Agent.'}
   else if(activeView!=='all'){title=activeView[0].toUpperCase()+activeView.slice(1);sub={inbox:'Ideas you have not prioritized yet.',now:'Features you want to focus on now.',next:'Important features queued up next.',later:'Good ideas worth keeping for later.',done:'Features you have finished.'}[activeView]}
   $('pageTitle').textContent=title;$('pageSub').textContent=sub;
+  const agentToggle=$('projectAgentToggle');
+  if(agentToggle){
+    if(activeProject){
+      const on=projectReady(activeProject);
+      agentToggle.style.display='';
+      agentToggle.textContent=on?'⚡ Agent Reading Project':'⚡ Ready for Agent';
+      agentToggle.classList.toggle('agent-on',on);
+    }else{
+      agentToggle.style.display='none';
+      agentToggle.classList.remove('agent-on');
+    }
+  }
   $('statTotal').textContent=state.features.length;$('statNow').textContent=state.features.filter(f=>f.status==='Now').length;$('statNext').textContent=state.features.filter(f=>f.status==='Next').length;$('statDone').textContent=state.features.filter(f=>f.status==='Done').length;
   const list=$('featureList');if(!arr.length){list.innerHTML='<div class="empty"><b>No features found</b>Try another search/filter or add a new feature.</div>';return}
-  list.innerHTML=arr.map(f=>`<article class="card" data-id="${f.id}"><div><div class="card-context"><span class="context-app">${esc(projectAppName(f.project_id))}</span><span class="context-sep">›</span><span class="context-project">${esc(projectName(f.project_id))}</span>${f.area?`<span class="context-sep">›</span><span class="context-area">${esc(f.area)}</span>`:''}</div><div class="card-title">${esc(f.title)}</div><div class="card-meta"><span class="chip status-${f.status.toLowerCase()}">${esc(f.status)}</span><span class="chip priority-${f.priority.toLowerCase()}">${esc(f.priority)}</span>${f.ready_for_agent?'<span class="chip ready-chip">⚡ Ready for Agent</span>':''}${(f.tags||[]).slice(0,4).map(t=>`<span class="chip">#${esc(t)}</span>`).join('')}</div>${f.notes?`<div class="desc">${esc(f.notes)}</div>`:''}</div><div class="card-actions"><button class="tiny edit" title="Edit">✎</button></div></article>`).join('');
+  list.innerHTML=arr.map(f=>`<article class="card" data-id="${f.id}"><div><div class="card-context"><span class="context-app">${esc(projectAppName(f.project_id))}</span><span class="context-sep">›</span><span class="context-project">${esc(projectName(f.project_id))}</span>${f.area?`<span class="context-sep">›</span><span class="context-area">${esc(f.area)}</span>`:''}</div><div class="card-title">${esc(f.title)}</div><div class="card-meta"><span class="chip status-${f.status.toLowerCase()}">${esc(f.status)}</span><span class="chip priority-${f.priority.toLowerCase()}">${esc(f.priority)}</span>${projectReady(f.project_id)?'<span class="chip ready-chip">⚡ Agent Project</span>':''}${(f.tags||[]).slice(0,4).map(t=>`<span class="chip">#${esc(t)}</span>`).join('')}</div>${f.notes?`<div class="desc">${esc(f.notes)}</div>`:''}</div><div class="card-actions"><button class="tiny edit" title="Edit">✎</button></div></article>`).join('');
   list.querySelectorAll('.card').forEach(c=>c.onclick=()=>openDrawer(c.dataset.id));
 }
 function projectOptions(selected){return state.projects.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(projectAppName(p.id))} — ${esc(p.name)}</option>`).join('')}
 function openDrawer(id=null){
   editingId=id;const f=id?state.features.find(x=>x.id===id):null;$('drawerTitle').textContent=f?'Edit Feature':'Add Feature';
-  $('fTitle').value=f?.title||'';$('fProject').innerHTML=projectOptions(f?.project_id||activeProject||state.projects[0]?.id);$('fArea').value=f?.area||'';$('fStatus').value=f?.status||'Inbox';$('fPriority').value=f?.priority||'Medium';$('fTags').value=(f?.tags||[]).join(', ');$('fNotes').value=f?.notes||'';$('fAcceptance').value=f?.acceptance||'';$('fVersion').value=f?.version||'';$('fReadyAgent').checked=!!f?.ready_for_agent;$('fAgentNotes').value=f?.agent_notes||'';$('fFilesLikely').value=f?.files_likely||'';$('fDependencies').value=f?.dependencies||'';$('fDoNotChange').value=f?.do_not_change||'';$('deleteFeature').style.display=f?'block':'none';$('overlay').classList.add('show');$('drawer').classList.add('show');setTimeout(()=>$('fTitle').focus(),100)
+  $('fTitle').value=f?.title||'';$('fProject').innerHTML=projectOptions(f?.project_id||activeProject||state.projects[0]?.id);$('fArea').value=f?.area||'';$('fStatus').value=f?.status||'Inbox';$('fPriority').value=f?.priority||'Medium';$('fTags').value=(f?.tags||[]).join(', ');$('fNotes').value=f?.notes||'';$('fAcceptance').value=f?.acceptance||'';$('fVersion').value=f?.version||'';$('fAgentNotes').value=f?.agent_notes||'';$('fFilesLikely').value=f?.files_likely||'';$('fDependencies').value=f?.dependencies||'';$('fDoNotChange').value=f?.do_not_change||'';$('deleteFeature').style.display=f?'block':'none';$('overlay').classList.add('show');$('drawer').classList.add('show');setTimeout(()=>$('fTitle').focus(),100)
 }
 function closeDrawer(){$('overlay').classList.remove('show');$('drawer').classList.remove('show');editingId=null}
 async function saveFeature(){
   const title=$('fTitle').value.trim();if(!title){toast('Give the feature a name');return}
-  const row={user_id:currentUser(),project_id:$('fProject').value,area:$('fArea').value.trim(),title,status:$('fStatus').value,priority:$('fPriority').value,tags:$('fTags').value.split(',').map(x=>x.trim()).filter(Boolean),notes:$('fNotes').value.trim(),acceptance:$('fAcceptance').value.trim(),version:$('fVersion').value.trim(),ready_for_agent:$('fReadyAgent').checked,agent_notes:$('fAgentNotes').value.trim(),files_likely:$('fFilesLikely').value.trim(),dependencies:$('fDependencies').value.trim(),do_not_change:$('fDoNotChange').value.trim(),updated_at:new Date().toISOString()};
+  const row={user_id:currentUser(),project_id:$('fProject').value,area:$('fArea').value.trim(),title,status:$('fStatus').value,priority:$('fPriority').value,tags:$('fTags').value.split(',').map(x=>x.trim()).filter(Boolean),notes:$('fNotes').value.trim(),acceptance:$('fAcceptance').value.trim(),version:$('fVersion').value.trim(),agent_notes:$('fAgentNotes').value.trim(),files_likely:$('fFilesLikely').value.trim(),dependencies:$('fDependencies').value.trim(),do_not_change:$('fDoNotChange').value.trim(),updated_at:new Date().toISOString()};
   const q=editingId?sb.from('features').update(row).eq('id',editingId):sb.from('features').insert(row); const {error}=await q;if(error){toast(error.message);return}const wasEditing=!!editingId;closeDrawer();await loadCloud();toast(wasEditing?'Feature updated':'Feature added')
 }
 async function deleteFeature(){if(!editingId)return;if(!confirm('Delete this feature?'))return;const {error}=await sb.from('features').delete().eq('id',editingId);if(error){toast(error.message);return}closeDrawer();await loadCloud();toast('Feature deleted')}
 
 function applicationOptions(selected=''){const known=[...state.applications];return known.map(a=>`<option value="${a.id}" ${a.id===selected?'selected':''}>${esc(a.name)}</option>`).join('')+'<option value="__custom">New application…</option>'}
-function showProjectModal(show=true){$('modalOverlay').classList.toggle('show',show);$('projectModal').classList.toggle('show',show);if(show){$('projectName').value='';$('projectApp').innerHTML=applicationOptions(activeApp||'');if(activeApp)$('projectApp').value=activeApp;$('customAppName').value='';$('customAppField').style.display='none';$('projectRepo').value='';$('projectBranch').value='main';$('projectLocalPath').value='';$('projectAgentInstructions').value='';setTimeout(()=>$('projectName').focus(),80)}}
+function showProjectModal(show=true){$('modalOverlay').classList.toggle('show',show);$('projectModal').classList.toggle('show',show);if(show){$('projectName').value='';$('projectApp').innerHTML=applicationOptions(activeApp||'');if(activeApp)$('projectApp').value=activeApp;$('customAppName').value='';$('customAppField').style.display='none';$('projectRepo').value='';$('projectBranch').value='main';$('projectLocalPath').value='';$('projectAgentInstructions').value='';$('projectReadyAgent').checked=false;setTimeout(()=>$('projectName').focus(),80)}}
 async function addProject(){
   const name=$('projectName').value.trim();if(!name){toast('Give the project a name');return}
   let appId=$('projectApp').value;if(appId==='__custom'){const appName=$('customAppName').value.trim();if(!appName){toast('Give the application a name');return}const {data,error}=await sb.from('applications').insert({user_id:currentUser(),name:appName}).select().single();if(error){toast(error.message);return}appId=data.id}
-  const row={user_id:currentUser(),application_id:appId,name,repo_url:$('projectRepo').value.trim(),branch:$('projectBranch').value.trim()||'main',local_path:$('projectLocalPath').value.trim(),agent_instructions:$('projectAgentInstructions').value.trim()};
+  const row={user_id:currentUser(),application_id:appId,name,repo_url:$('projectRepo').value.trim(),branch:$('projectBranch').value.trim()||'main',local_path:$('projectLocalPath').value.trim(),agent_instructions:$('projectAgentInstructions').value.trim(),ready_for_agent:$('projectReadyAgent').checked};
   const {data,error}=await sb.from('projects').insert(row).select().single();if(error){toast(error.message);return}showProjectModal(false);activeProject=data.id;activeApp=null;await loadCloud();toast('Project added')
+}
+
+async function toggleActiveProjectAgent(){
+  if(!activeProject)return;
+  const project=state.projects.find(p=>p.id===activeProject); if(!project)return;
+  const next=!project.ready_for_agent;
+  const {error}=await sb.from('projects').update({ready_for_agent:next,updated_at:new Date().toISOString()}).eq('id',activeProject);
+  if(error){toast(error.message);return}
+  await loadCloud();
+  toast(next?'Project is now Ready for Agent':'Project removed from Agent Queue');
 }
 
 async function ensureDefaultApplications(){
@@ -266,7 +290,7 @@ async function importLegacyObject(x){
   const appByName={};state.applications.forEach(a=>appByName[a.name]=a.id);
   for(const p of x.projects){const an=p.app||'Standalone / Web';if(!appByName[an]){const {data,error}=await sb.from('applications').insert({user_id:currentUser(),name:an}).select().single();if(error)throw error;appByName[an]=data.id;state.applications.push(data)}}
   const idMap={};
-  for(const p of x.projects){const {data,error}=await sb.from('projects').insert({user_id:currentUser(),application_id:appByName[p.app||'Standalone / Web'],name:p.name,branch:'main'}).select().single();if(error)throw error;idMap[p.id]=data.id}
+  for(const p of x.projects){const {data,error}=await sb.from('projects').insert({user_id:currentUser(),application_id:appByName[p.app||'Standalone / Web'],name:p.name,branch:'main',ready_for_agent:false}).select().single();if(error)throw error;idMap[p.id]=data.id}
   if(x.features.length){const rows=x.features.map(f=>({user_id:currentUser(),project_id:idMap[f.projectId],area:f.area||'',title:f.title,status:f.status||'Inbox',priority:f.priority||'Medium',tags:f.tags||[],notes:f.notes||'',acceptance:f.acceptance||'',version:f.version||'',ready_for_agent:false,created_at:new Date(f.created||Date.now()).toISOString(),updated_at:new Date(f.updated||Date.now()).toISOString()})).filter(r=>r.project_id);const {error}=await sb.from('features').insert(rows);if(error)throw error}
   await loadCloud();
 }
@@ -276,6 +300,7 @@ function importData(file){const r=new FileReader();r.onload=async()=>{try{const 
 $('authButton').onclick=login;$('authEmail').onkeydown=e=>{if(e.key==='Enter')login()};$('logoutBtn').onclick=logout;
 document.querySelectorAll('.navbtn').forEach(b=>b.onclick=()=>{activeProject=null;activeApp=null;activeView=b.dataset.view;render()});
 $('newFeatureBtn').onclick=()=>openDrawer();$('closeDrawer').onclick=closeDrawer;$('cancelFeature').onclick=closeDrawer;$('overlay').onclick=closeDrawer;$('saveFeature').onclick=saveFeature;$('deleteFeature').onclick=deleteFeature;
+$('projectAgentToggle').onclick=toggleActiveProjectAgent;
 $('searchInput').oninput=renderMain;$('priorityFilter').onchange=renderMain;$('sortSelect').onchange=renderMain;
 $('addProjectBtn').onclick=()=>showProjectModal(true);$('newProjectTopBtn').onclick=()=>showProjectModal(true);$('projectApp').onchange=e=>{$('customAppField').style.display=e.target.value==='__custom'?'block':'none';if(e.target.value==='__custom')setTimeout(()=>$('customAppName').focus(),40)};$('cancelProject').onclick=()=>showProjectModal(false);$('modalOverlay').onclick=()=>showProjectModal(false);$('saveProject').onclick=addProject;$('projectName').onkeydown=e=>{if(e.key==='Enter')addProject()};
 $('exportBtn').onclick=exportData;$('importBtn').onclick=()=>$('importFile').click();$('importFile').onchange=e=>{if(e.target.files[0])importData(e.target.files[0]);e.target.value=''};
