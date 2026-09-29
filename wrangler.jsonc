@@ -7,5 +7,15 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "SUPABASE_URL": "https://jqolpqewyugiwmxquvfh.supabase.co"
+  },
+  "secrets": {
+    "required": [
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "AGENT_USER_ID",
+      "AGENT_FEED_TOKEN"
+    ]
   }
 }
