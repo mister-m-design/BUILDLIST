@@ -64,6 +64,104 @@ async function agentTasks(request, env) {
 }
 
 
+
+async function updateAgentTask(request, env, taskId) {
+  const auth = request.headers.get("Authorization") || "";
+  const expected = `Bearer ${env.AGENT_FEED_TOKEN || ""}`;
+  if (!env.AGENT_FEED_TOKEN || auth !== expected) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const base = env.SUPABASE_URL;
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
+  const user = env.AGENT_USER_ID;
+  if (!base || !key || !user) {
+    return Response.json({ error: "Server not configured" }, { status: 500 });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const allowedStatuses = new Set(["Inbox", "Now", "Next", "Later", "Done"]);
+  const status = body?.status;
+  if (status !== undefined && !allowedStatuses.has(status)) {
+    return Response.json({ error: "Invalid status" }, { status: 400 });
+  }
+
+  const note = body?.note === undefined ? undefined : String(body.note).trim();
+  const agent = body?.agent === undefined ? undefined : String(body.agent).trim();
+
+  const headers = {
+    apikey: key,
+    Authorization: `Bearer ${key}`,
+    "Content-Type": "application/json",
+    Prefer: "return=representation"
+  };
+
+  // Verify the task belongs to this user and is in a project exposed to agents.
+  const featureR = await fetch(
+    `${base}/rest/v1/features?id=eq.${encodeURIComponent(taskId)}&user_id=eq.${encodeURIComponent(user)}&select=id,project_id,status,agent_notes`,
+    { headers }
+  );
+  if (!featureR.ok) {
+    return Response.json({ error: "Task lookup failed" }, { status: 502 });
+  }
+  const features = await featureR.json();
+  const feature = features[0];
+  if (!feature) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  const projectR = await fetch(
+    `${base}/rest/v1/projects?id=eq.${encodeURIComponent(feature.project_id)}&user_id=eq.${encodeURIComponent(user)}&ready_for_agent=eq.true&select=id`,
+    { headers }
+  );
+  if (!projectR.ok) {
+    return Response.json({ error: "Project lookup failed" }, { status: 502 });
+  }
+  const projects = await projectR.json();
+  if (!projects.length) {
+    return Response.json({ error: "Project is not Ready for Agent" }, { status: 403 });
+  }
+
+  const update = { updated_at: new Date().toISOString() };
+  if (status !== undefined) update.status = status;
+
+  if (note !== undefined || agent !== undefined) {
+    const stamp = new Date().toISOString();
+    const who = agent || "Agent";
+    const message = note || "Updated task";
+    const entry = `[${stamp}] ${who}: ${message}`;
+    const existing = String(feature.agent_notes || "").trim();
+    update.agent_notes = existing ? `${existing}\n${entry}` : entry;
+  }
+
+  const updateR = await fetch(
+    `${base}/rest/v1/features?id=eq.${encodeURIComponent(taskId)}&user_id=eq.${encodeURIComponent(user)}`,
+    {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify(update)
+    }
+  );
+
+  if (!updateR.ok) {
+    let detail = "Task update failed";
+    try {
+      const data = await updateR.json();
+      detail = data?.message || data?.error || detail;
+    } catch {}
+    return Response.json({ error: detail }, { status: updateR.status });
+  }
+
+  const rows = await updateR.json();
+  return Response.json({ ok: true, task: rows[0] || { id: taskId, ...update } });
+}
+
 async function setPassword(request, env) {
   const auth = request.headers.get("Authorization") || "";
   const expected = `Bearer ${env.AGENT_FEED_TOKEN || ""}`;
@@ -117,6 +215,10 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/api/agent/tasks" && request.method === "GET") {
       return agentTasks(request, env);
+    }
+    const taskMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)$/);
+    if (taskMatch && request.method === "PATCH") {
+      return updateAgentTask(request, env, taskMatch[1]);
     }
     if (url.pathname === "/api/auth/set-password" && request.method === "POST") {
       return setPassword(request, env);
