@@ -16,7 +16,7 @@ async function agentTasks(request, env) {
   const [appsR, projectsR, featuresR] = await Promise.all([
     fetch(`${base}/rest/v1/applications?user_id=eq.${encodeURIComponent(user)}&select=*`, { headers }),
     fetch(`${base}/rest/v1/projects?user_id=eq.${encodeURIComponent(user)}&select=*`, { headers }),
-    fetch(`${base}/rest/v1/features?user_id=eq.${encodeURIComponent(user)}&ready_for_agent=eq.true&status=neq.Done&select=*`, { headers })
+    fetch(`${base}/rest/v1/features?user_id=eq.${encodeURIComponent(user)}&status=neq.Done&select=*`, { headers })
   ]);
 
   if (![appsR, projectsR, featuresR].every(r => r.ok)) {
@@ -30,7 +30,8 @@ async function agentTasks(request, env) {
   const appMap = Object.fromEntries(apps.map(a => [a.id, a]));
   const projectMap = Object.fromEntries(projects.map(p => [p.id, p]));
 
-  const tasks = features.map(f => {
+  const readyProjects = new Set(projects.filter(p => p.ready_for_agent).map(p => p.id));
+  const tasks = features.filter(f => readyProjects.has(f.project_id)).map(f => {
     const p = projectMap[f.project_id] || {};
     const a = appMap[p.application_id] || {};
     return {
