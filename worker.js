@@ -72,7 +72,12 @@ async function agentTasks(request, env) {
       filesLikelyInvolved: f.files_likely || "",
       dependencies: f.dependencies || "",
       doNotChange: f.do_not_change || "",
-      updatedAt: f.updated_at
+      updatedAt: f.updated_at,
+      writeBack: {
+        endpoint: `/api/agent/tasks/${f.id}`,
+        allowedOutcomes: ["Completed","Partial","Blocked","Failed","Skipped","Update"],
+        fields: ["status","note","agent","outcome","reason"]
+      }
     };
   });
 
@@ -113,6 +118,15 @@ async function updateAgentTask(request, env, taskId) {
 
   const note = body?.note === undefined ? undefined : String(body.note).trim();
   const agent = body?.agent === undefined ? undefined : String(body.agent).trim();
+  const allowedOutcomes = new Set(["Completed","Partial","Blocked","Failed","Skipped","Update"]);
+  let outcome = body?.outcome === undefined ? undefined : String(body.outcome).trim();
+  const reason = body?.reason === undefined ? "" : String(body.reason).trim();
+  if(outcome !== undefined && !allowedOutcomes.has(outcome)){
+    return Response.json({ error: "Invalid outcome" }, { status: 400 });
+  }
+  if(outcome === undefined){
+    outcome = status === "Done" ? "Completed" : "Update";
+  }
 
   const headers = {
     apikey: key,
@@ -157,13 +171,25 @@ async function updateAgentTask(request, env, taskId) {
   const update = { updated_at: new Date().toISOString() };
   if (status !== undefined) update.status = status;
 
-  if (note !== undefined || agent !== undefined) {
+  let normalizedNote = null;
+  if (note !== undefined || agent !== undefined || body?.outcome !== undefined || reason) {
     const stamp = new Date().toISOString();
     const who = agent || "Agent";
     const message = note || "Updated task";
-    const entry = `[${stamp}] ${who}: ${message}`;
+    const suffix = reason ? ` Reason: ${reason}` : "";
+    const entry = `[${stamp}] ${who} [${outcome}]: ${message}${suffix}`;
     const existing = String(feature.agent_notes || "").trim();
     update.agent_notes = existing ? `${existing}\n${entry}` : entry;
+    normalizedNote = {
+      user_id: user,
+      feature_id: taskId,
+      agent: who,
+      note: message,
+      outcome,
+      reason,
+      task_status: status || feature.status || "",
+      resolved: false
+    };
   }
 
   const updateR = await fetch(
@@ -185,7 +211,22 @@ async function updateAgentTask(request, env, taskId) {
   }
 
   const rows = await updateR.json();
-  return Response.json({ ok: true, task: rows[0] || { id: taskId, ...update } });
+
+  if (normalizedNote) {
+    const noteR = await fetch(`${base}/rest/v1/agent_notes`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(normalizedNote)
+    });
+    if (!noteR.ok) {
+      return Response.json({
+        error: "Task updated, but Agent Note could not be recorded",
+        task: rows[0] || { id: taskId, ...update }
+      }, { status: 502 });
+    }
+  }
+
+  return Response.json({ ok: true, task: rows[0] || { id: taskId, ...update }, outcome, reason });
 }
 
 async function setPassword(request, env) {
